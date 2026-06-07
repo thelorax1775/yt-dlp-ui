@@ -14,12 +14,14 @@ services:
       - "8000"
 
   frontend:
-    build: ./frontend
+    build:
+      context: ./frontend
+      args:
+        # Baked into the Next.js build — sets the /api proxy target so the
+        # frontend can reach the backend container.
+        BACKEND_URL: http://backend:8000
     container_name: ytdlp-frontend
     restart: unless-stopped
-    environment:
-      # Server-side proxy target (container-to-container)
-      - BACKEND_URL=http://backend:8000
     ports:
       - "3000:3000"
     depends_on:
