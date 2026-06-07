@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+backend/venv/
+backend/.venv/
+*.db
+*.sqlite3
+
+# Node / Next.js
+frontend/node_modules/
+frontend/.next/
+frontend/out/
+frontend/next-env.d.ts
+
+# Env
+.env
+.env.local
+
+# OS / editor
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+
+# Claude Code local settings
+.claude/
+
+# Downloads (don't commit downloaded media) — anchored to repo root
+# so it doesn't match frontend/app/downloads/
+/downloads/
+/data/

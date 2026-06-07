@@ -1,0 +1,219 @@
+# yt-dlp Web UI
+
+A simple, self-hosted web interface for [yt-dlp](https://github.com/yt-dlp/yt-dlp).
+Paste a video or playlist URL, preview its metadata, queue downloads, and watch
+progress live — all from a clean browser UI.
+
+![status](https://img.shields.io/badge/status-mvp-blue)
+
+## Features
+
+- **Home** — paste a URL, fetch metadata (thumbnail, title, uploader, duration),
+  and download as **best video**, **best audio** (extracted), or a **custom format**.
+- **Downloads** — live job list with progress bar, status, speed and ETA, updated
+  in real time via Server-Sent Events. Cancel or retry any job.
+- **History** — table of completed downloads with thumbnail, title, URL, date and
+  saved file path.
+- **Settings** — configure default download folder, audio format, concurrent
+  downloads, and the `yt-dlp` / `ffmpeg` binary paths.
+
+## Tech Stack
+
+| Layer    | Technology                                          |
+| -------- | --------------------------------------------------- |
+| Backend  | Python, FastAPI, SQLAlchemy (async), SQLite, sse-starlette |
+| Frontend | Next.js 14 (App Router), TypeScript, TailwindCSS, shadcn/ui |
+| Tooling  | `yt-dlp` and `ffmpeg` installed on the host         |
+
+### Security
+
+`yt-dlp` is **never** invoked through a shell. Every call uses
+`asyncio.create_subprocess_exec(*args)` with the URL and all paths as discrete
+argument-list elements, so shell metacharacters cannot be injected. URLs are
+validated before they ever reach the subprocess.
+
+## Project Structure
+
+```
+backend/
+  api/routes/      # info, downloads, history, settings endpoints
+  services/        # download_manager.py (queue + subprocess), metadata.py
+  models/          # database.py (SQLAlchemy), schemas.py (Pydantic)
+  main.py          # FastAPI app + lifespan
+frontend/
+  app/             # home, downloads, history, settings pages
+  components/       # MetadataCard, JobCard, HistoryTable, SettingsForm, ...
+  lib/             # api.ts (typed fetch), types.ts
+docker-compose.yml
+nginx.conf         # example reverse proxy
+```
+
+## API
+
+| Method | Path                     | Description                       |
+| ------ | ------------------------ | --------------------------------- |
+| GET    | `/api/info?url=`         | Fetch metadata for a URL          |
+| POST   | `/api/download`          | Queue a download job              |
+| GET    | `/api/jobs`              | List active/recent jobs           |
+| GET    | `/api/jobs/stream`       | SSE stream of live job updates    |
+| DELETE | `/api/jobs/{id}`         | Cancel a job                      |
+| POST   | `/api/jobs/{id}/retry`   | Retry a failed/cancelled job      |
+| GET    | `/api/history`           | List completed downloads          |
+| GET    | `/api/settings`          | Get settings                      |
+| POST   | `/api/settings`          | Update settings                   |
+
+---
+
+## Local Development
+
+### Prerequisites
+
+- Python 3.11+ and `pip`
+- Node.js 18+ and `npm`
+- `yt-dlp` and `ffmpeg` available on your `PATH`
+  (or set their absolute paths in **Settings**)
+
+```bash
+# Debian/Ubuntu
+sudo apt install ffmpeg
+sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
+sudo chmod a+rx /usr/local/bin/yt-dlp
+```
+
+### 1. Backend
+
+```bash
+cd backend
+python -m venv venv
+source venv/bin/activate          # Windows: venv\Scripts\activate
+pip install -r requirements.txt
+uvicorn main:app --reload --port 8000
+```
+
+The API is now at `http://localhost:8000` (docs at `/docs`). On first run it
+creates `ytdlp_ui.db` and seeds default settings.
+
+### 2. Frontend
+
+```bash
+cd frontend
+npm install
+npm run dev                       # http://localhost:3000
+```
+
+The frontend proxies `/api/*` to the backend (configured in `next.config.mjs`),
+so no CORS setup is needed. Override the target with `BACKEND_URL` if your
+backend runs elsewhere.
+
+Open **http://localhost:3000** and paste a URL.
+
+---
+
+## Deployment
+
+### Option A — Docker Compose (recommended)
+
+The backend image installs `yt-dlp` and `ffmpeg` for you.
+
+```bash
+# Choose where downloads land on the host (default ./downloads)
+export DOWNLOAD_DIR=/srv/media
+
+docker compose up -d --build
+```
+
+- Frontend: `http://<host>:3000`
+- SQLite DB persists in `./data`, media in `$DOWNLOAD_DIR`
+- The backend is only reachable from the frontend container (not published)
+
+> **Note:** the in-app download folder setting defaults to `/downloads`, which is
+> the path mounted inside the backend container. Leave it as `/downloads` when
+> running via Docker.
+
+Put nginx (or any reverse proxy) in front of port 3000 for TLS — see below.
+
+### Option B — Bare metal (systemd + nginx)
+
+**1. Install the app**
+
+```bash
+sudo mkdir -p /opt/ytdlp-ui
+sudo chown $USER /opt/ytdlp-ui
+git clone <your-repo> /opt/ytdlp-ui
+cd /opt/ytdlp-ui
+
+# backend
+cd backend && python -m venv venv && ./venv/bin/pip install -r requirements.txt && cd ..
+# frontend
+cd frontend && npm ci && npm run build && cd ..
+```
+
+**2. Backend service** — `/etc/systemd/system/ytdlp-backend.service`
+
+```ini
+[Unit]
+Description=yt-dlp Web UI Backend
+After=network.target
+
+[Service]
+User=ytdlp
+WorkingDirectory=/opt/ytdlp-ui/backend
+Environment=DATABASE_PATH=/opt/ytdlp-ui/backend/ytdlp_ui.db
+ExecStart=/opt/ytdlp-ui/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**3. Frontend service** — `/etc/systemd/system/ytdlp-frontend.service`
+
+```ini
+[Unit]
+Description=yt-dlp Web UI Frontend
+After=network.target ytdlp-backend.service
+
+[Service]
+User=ytdlp
+WorkingDirectory=/opt/ytdlp-ui/frontend
+Environment=BACKEND_URL=http://127.0.0.1:8000
+Environment=PORT=3000
+ExecStart=/usr/bin/npm run start
+Restart=on-failure
+
+[Install]
+WantedBy=multi-user.target
+```
+
+**4. Enable and start**
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now ytdlp-backend ytdlp-frontend
+```
+
+**5. Reverse proxy** — copy `nginx.conf` to
+`/etc/nginx/sites-available/ytdlp-ui`, edit `server_name`, then:
+
+```bash
+sudo ln -s /etc/nginx/sites-available/ytdlp-ui /etc/nginx/sites-enabled/
+sudo nginx -t && sudo systemctl reload nginx
+# TLS:
+sudo certbot --nginx -d ytdlp.example.com
+```
+
+`proxy_buffering off` in the `/api/` block is required so live progress (SSE)
+streams through immediately.
+
+---
+
+## Notes & Limitations
+
+- Changing **concurrent downloads** takes effect after a backend restart (the
+  worker pool is sized at startup).
+- This MVP has **no authentication** — run it behind a VPN, on a trusted LAN, or
+  add HTTP basic auth at the nginx layer before exposing it publicly.
+- Job state lives in memory plus SQLite; in-flight jobs do not resume after a
+  backend restart (they can be retried from the Downloads/History view).
+
+See [TODO.md](./TODO.md) for the roadmap.

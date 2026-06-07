@@ -1,0 +1,26 @@
+services:
+  backend:
+    build: ./backend
+    container_name: ytdlp-backend
+    restart: unless-stopped
+    volumes:
+      # Persist SQLite DB and downloads on the host
+      - ./data:/app/data
+      - ${DOWNLOAD_DIR:-./downloads}:/downloads
+    environment:
+      # SQLite file lives in the mounted data dir
+      - DATABASE_PATH=/app/data/ytdlp_ui.db
+    expose:
+      - "8000"
+
+  frontend:
+    build: ./frontend
+    container_name: ytdlp-frontend
+    restart: unless-stopped
+    environment:
+      # Server-side proxy target (container-to-container)
+      - BACKEND_URL=http://backend:8000
+    ports:
+      - "3000:3000"
+    depends_on:
+      - backend
