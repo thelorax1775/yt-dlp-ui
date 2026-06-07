@@ -14,6 +14,8 @@ The current build is a working MVP. Below is what's done and what could come nex
 - [x] Settings (download folder, audio format, concurrency, tool paths)
 - [x] Next.js + TypeScript + Tailwind + shadcn/ui frontend
 - [x] Home / Downloads / History / Settings pages
+- [x] Responsive UI (collapsing mobile nav, no overflow, card layouts)
+- [x] Network shares: mount/unmount SMB & NFS, auto-mount, set as download folder
 - [x] Docker Compose, Dockerfiles, systemd units, nginx example
 
 ## 🔜 Next up

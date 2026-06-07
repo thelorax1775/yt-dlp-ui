@@ -75,3 +75,45 @@ class SettingsUpdate(BaseModel):
     concurrent_downloads: Optional[int] = None
     ytdlp_path: Optional[str] = None
     ffmpeg_path: Optional[str] = None
+
+
+class ShareBase(BaseModel):
+    name: str
+    type: str  # "smb" | "nfs"
+    remote: str
+    mount_point: str
+    username: Optional[str] = None
+    password: Optional[str] = None
+    domain: Optional[str] = None
+    options: Optional[str] = None
+    auto_mount: bool = False
+
+    @field_validator("type")
+    @classmethod
+    def validate_type(cls, v: str) -> str:
+        if v not in ("smb", "nfs"):
+            raise ValueError("type must be 'smb' or 'nfs'")
+        return v
+
+
+class ShareCreate(ShareBase):
+    pass
+
+
+class ShareResponse(BaseModel):
+    id: int
+    name: str
+    type: str
+    remote: str
+    mount_point: str
+    username: Optional[str] = None
+    domain: Optional[str] = None
+    options: Optional[str] = None
+    auto_mount: bool = False
+    mounted: bool = False
+    # password intentionally omitted from responses
+
+
+class MountResult(BaseModel):
+    mounted: bool
+    message: Optional[str] = None

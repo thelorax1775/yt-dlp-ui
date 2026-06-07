@@ -1,15 +1,18 @@
+import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
+import { SharesManager } from "@/components/SharesManager";
 
 export default function SettingsPage() {
   return (
-    <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Settings</h1>
-        <p className="text-muted-foreground">
-          Configure download behavior and tool paths.
-        </p>
+    <div>
+      <PageHeader
+        title="Settings"
+        description="Configure download behavior, tool paths, and network shares."
+      />
+      <div className="flex flex-col gap-6">
+        <SettingsForm />
+        <SharesManager />
       </div>
-      <SettingsForm />
     </div>
   );
 }

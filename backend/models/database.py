@@ -56,6 +56,21 @@ class HistoryModel(Base):
     finished_at = Column(DateTime, default=datetime.utcnow)
 
 
+class ShareModel(Base):
+    __tablename__ = "shares"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(Text, nullable=False)
+    type = Column(String(8), nullable=False)  # "smb" | "nfs"
+    remote = Column(Text, nullable=False)  # //host/share  or  host:/export
+    mount_point = Column(Text, nullable=False)
+    username = Column(Text)  # smb only
+    password = Column(Text)  # smb only
+    domain = Column(Text)  # smb only
+    options = Column(Text)  # extra mount options (comma separated)
+    auto_mount = Column(Integer, nullable=False, default=0)  # bool (0/1)
+
+
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)

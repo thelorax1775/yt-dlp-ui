@@ -10,6 +10,13 @@ services:
     environment:
       # SQLite file lives in the mounted data dir
       - DATABASE_PATH=/app/data/ytdlp_ui.db
+    # Required to mount SMB/NFS network shares from inside the container.
+    # Remove this block if you don't use the network-shares feature.
+    cap_add:
+      - SYS_ADMIN
+      - DAC_READ_SEARCH
+    security_opt:
+      - apparmor:unconfined
     expose:
       - "8000"
 

@@ -4,9 +4,10 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import downloads, history, info, settings
+from api.routes import downloads, history, info, settings, shares
 from models.database import init_db, seed_settings
 from services.download_manager import manager
+from services.share_manager import auto_mount_all
 
 logging.basicConfig(level=logging.INFO)
 
@@ -15,6 +16,7 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(app: FastAPI):
     await init_db()
     await seed_settings()
+    await auto_mount_all()
     await manager.start()
     yield
     await manager.stop()
@@ -34,6 +36,7 @@ app.include_router(info.router, prefix="/api", tags=["info"])
 app.include_router(downloads.router, prefix="/api", tags=["downloads"])
 app.include_router(history.router, prefix="/api", tags=["history"])
 app.include_router(settings.router, prefix="/api", tags=["settings"])
+app.include_router(shares.router, prefix="/api", tags=["shares"])
 
 
 @app.get("/api/health")

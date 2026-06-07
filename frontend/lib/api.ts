@@ -3,7 +3,10 @@ import type {
   HistoryEntry,
   Job,
   Metadata,
+  MountResult,
   Settings,
+  Share,
+  ShareCreate,
 } from "./types";
 
 async function handle<T>(resPromise: Promise<Response>): Promise<T> {
@@ -54,4 +57,24 @@ export const api = {
         body: JSON.stringify(data),
       })
     ),
+
+  getShares: () => handle<Share[]>(fetch("/api/shares")),
+
+  createShare: (data: ShareCreate) =>
+    handle<Share>(
+      fetch("/api/shares", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(data),
+      })
+    ),
+
+  deleteShare: (id: number) =>
+    handle<{ status: string }>(fetch(`/api/shares/${id}`, { method: "DELETE" })),
+
+  mountShare: (id: number) =>
+    handle<MountResult>(fetch(`/api/shares/${id}/mount`, { method: "POST" })),
+
+  unmountShare: (id: number) =>
+    handle<MountResult>(fetch(`/api/shares/${id}/unmount`, { method: "POST" })),
 };

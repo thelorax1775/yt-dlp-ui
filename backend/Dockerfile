@@ -1,8 +1,10 @@
 FROM python:3.12-slim
 
-# Install ffmpeg (yt-dlp needs it for merging/extraction)
+# ffmpeg: yt-dlp needs it for merging/extraction.
+# cifs-utils / nfs-common: required to mount SMB and NFS network shares.
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends ffmpeg ca-certificates \
+    && apt-get install -y --no-install-recommends \
+        ffmpeg ca-certificates cifs-utils nfs-common \
     && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /app

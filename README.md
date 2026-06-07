@@ -16,6 +16,10 @@ progress live — all from a clean browser UI.
   saved file path.
 - **Settings** — configure default download folder, audio format, concurrent
   downloads, and the `yt-dlp` / `ffmpeg` binary paths.
+- **Network shares** — mount **SMB/CIFS** or **NFS** shares from the UI and save
+  downloads straight to your NAS. Mount/unmount on demand, auto-mount on startup,
+  and "use as download folder" in one click.
+- **Responsive UI** — works on desktop and mobile (collapsing nav, no overflow).
 
 ## Tech Stack
 
@@ -36,13 +40,14 @@ validated before they ever reach the subprocess.
 
 ```
 backend/
-  api/routes/      # info, downloads, history, settings endpoints
-  services/        # download_manager.py (queue + subprocess), metadata.py
+  api/routes/      # info, downloads, history, settings, shares endpoints
+  services/        # download_manager.py, metadata.py, share_manager.py
   models/          # database.py (SQLAlchemy), schemas.py (Pydantic)
   main.py          # FastAPI app + lifespan
 frontend/
   app/             # home, downloads, history, settings pages
-  components/       # MetadataCard, JobCard, HistoryTable, SettingsForm, ...
+  components/       # MetadataCard, JobCard, HistoryTable, SettingsForm,
+                    # SharesManager, Sidebar, PageHeader, EmptyState, ...
   lib/             # api.ts (typed fetch), types.ts
 docker-compose.yml
 nginx.conf         # example reverse proxy
@@ -61,6 +66,37 @@ nginx.conf         # example reverse proxy
 | GET    | `/api/history`           | List completed downloads          |
 | GET    | `/api/settings`          | Get settings                      |
 | POST   | `/api/settings`          | Update settings                   |
+| GET    | `/api/shares`            | List network shares (+ mount state) |
+| POST   | `/api/shares`            | Add a network share               |
+| DELETE | `/api/shares/{id}`       | Remove a share (unmounts first)   |
+| POST   | `/api/shares/{id}/mount` | Mount a share                     |
+| POST   | `/api/shares/{id}/unmount` | Unmount a share                 |
+
+---
+
+## Network Shares (NFS / SMB)
+
+Add a share under **Settings → Network shares**:
+
+- **SMB/CIFS** — remote like `//192.168.1.10/media`, optional username/password
+  (blank = guest). Credentials are written to a `0600` file, never passed on the
+  command line.
+- **NFS** — remote like `192.168.1.10:/export/media`.
+
+Pick a **mount point** (e.g. `/mnt/shares/media`), then **Mount**. Use the
+**Use** button to point the download folder at the share. Enable **auto-mount**
+to remount it on backend startup.
+
+> **Privileges:** mounting network filesystems requires the backend process to
+> have mount capability.
+> - **Docker:** the provided `docker-compose.yml` grants `cap_add: SYS_ADMIN`
+>   (and `DAC_READ_SEARCH`) and the backend image bundles `cifs-utils` /
+>   `nfs-common`. Remove that block if you don't use this feature.
+> - **Bare metal:** run the backend as a user that can `mount` (e.g. via an
+>   appropriate sudoers rule) and install `cifs-utils` / `nfs-common`.
+>
+> Mounts happen via `mount`/`umount` with an explicit argument list (never a
+> shell), so share names and credentials can't inject commands.
 
 ---
 

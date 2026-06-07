@@ -5,6 +5,7 @@ import { Loader2, Search } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { PageHeader } from "@/components/PageHeader";
 import { MetadataCard } from "@/components/MetadataCard";
 import { DownloadForm } from "@/components/DownloadForm";
 import { api } from "@/lib/api";
@@ -33,22 +34,20 @@ export default function HomePage() {
   }
 
   return (
-    <div className="flex flex-col gap-6">
-      <div>
-        <h1 className="text-2xl font-bold tracking-tight">Download a video</h1>
-        <p className="text-muted-foreground">
-          Paste a video or playlist URL to fetch its details.
-        </p>
-      </div>
+    <div>
+      <PageHeader
+        title="Download a video"
+        description="Paste a video or playlist URL to fetch its details."
+      />
 
-      <form onSubmit={handleFetch} className="flex gap-2">
+      <form onSubmit={handleFetch} className="flex flex-col gap-2 sm:flex-row">
         <Input
           placeholder="https://www.youtube.com/watch?v=..."
           value={url}
           onChange={(e) => setUrl(e.target.value)}
           className="flex-1"
         />
-        <Button type="submit" disabled={loading}>
+        <Button type="submit" disabled={loading} className="sm:w-32">
           {loading ? (
             <Loader2 className="h-4 w-4 animate-spin" />
           ) : (
@@ -59,9 +58,13 @@ export default function HomePage() {
       </form>
 
       {metadata && (
-        <div className="flex flex-col gap-4">
-          <MetadataCard metadata={metadata} />
-          <DownloadForm metadata={metadata} />
+        <div className="mt-6 grid gap-4 lg:grid-cols-5">
+          <div className="lg:col-span-3">
+            <MetadataCard metadata={metadata} />
+          </div>
+          <div className="lg:col-span-2">
+            <DownloadForm metadata={metadata} />
+          </div>
         </div>
       )}
     </div>

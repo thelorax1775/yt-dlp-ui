@@ -63,3 +63,35 @@ export interface DownloadRequest {
   url: string;
   format_id?: string | null;
 }
+
+export type ShareType = "smb" | "nfs";
+
+export interface Share {
+  id: number;
+  name: string;
+  type: ShareType;
+  remote: string;
+  mount_point: string;
+  username?: string | null;
+  domain?: string | null;
+  options?: string | null;
+  auto_mount: boolean;
+  mounted: boolean;
+}
+
+export interface ShareCreate {
+  name: string;
+  type: ShareType;
+  remote: string;
+  mount_point: string;
+  username?: string | null;
+  password?: string | null;
+  domain?: string | null;
+  options?: string | null;
+  auto_mount: boolean;
+}
+
+export interface MountResult {
+  mounted: boolean;
+  message?: string | null;
+}

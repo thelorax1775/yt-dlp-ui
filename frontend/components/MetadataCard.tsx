@@ -1,38 +1,45 @@
 "use client";
 
 import { Clock, User } from "lucide-react";
-import { Card, CardContent } from "@/components/ui/card";
+import { Card } from "@/components/ui/card";
 import { formatDuration } from "@/lib/utils";
 import type { Metadata } from "@/lib/types";
 
 export function MetadataCard({ metadata }: { metadata: Metadata }) {
   return (
     <Card className="overflow-hidden">
-      <CardContent className="flex flex-col gap-4 p-4 sm:flex-row">
-        {metadata.thumbnail && (
-          // eslint-disable-next-line @next/next/no-img-element
+      {metadata.thumbnail && (
+        <div className="relative aspect-video w-full bg-muted">
+          {/* eslint-disable-next-line @next/next/no-img-element */}
           <img
             src={metadata.thumbnail}
             alt={metadata.title}
-            className="h-40 w-full rounded-lg object-cover sm:w-72"
+            className="h-full w-full object-cover"
           />
-        )}
-        <div className="flex flex-col justify-center gap-2">
-          <h2 className="text-lg font-semibold leading-snug">
-            {metadata.title}
-          </h2>
-          {metadata.uploader && (
-            <div className="flex items-center gap-2 text-sm text-muted-foreground">
-              <User className="h-4 w-4" />
-              {metadata.uploader}
-            </div>
-          )}
-          <div className="flex items-center gap-2 text-sm text-muted-foreground">
-            <Clock className="h-4 w-4" />
-            {formatDuration(metadata.duration)}
-          </div>
+          {metadata.duration ? (
+            <span className="absolute bottom-2 right-2 rounded bg-black/80 px-1.5 py-0.5 text-xs font-medium text-white">
+              {formatDuration(metadata.duration)}
+            </span>
+          ) : null}
         </div>
-      </CardContent>
+      )}
+      <div className="flex flex-col gap-2 p-4">
+        <h2 className="font-semibold leading-snug" title={metadata.title}>
+          {metadata.title}
+        </h2>
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-sm text-muted-foreground">
+          {metadata.uploader && (
+            <span className="flex items-center gap-1.5">
+              <User className="h-4 w-4 shrink-0" />
+              <span className="truncate">{metadata.uploader}</span>
+            </span>
+          )}
+          <span className="flex items-center gap-1.5">
+            <Clock className="h-4 w-4 shrink-0" />
+            {formatDuration(metadata.duration)}
+          </span>
+        </div>
+      </div>
     </Card>
   );
 }
