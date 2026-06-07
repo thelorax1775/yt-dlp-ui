@@ -2,11 +2,19 @@ export interface FormatInfo {
   format_id: string;
   ext: string;
   resolution?: string | null;
+  height?: number | null;
   fps?: number | null;
   vcodec?: string | null;
   acodec?: string | null;
   filesize?: number | null;
   format_note?: string | null;
+}
+
+export interface ResolutionOption {
+  height: number;
+  label: string;
+  ext?: string | null;
+  filesize?: number | null;
 }
 
 export interface Metadata {
@@ -16,6 +24,7 @@ export interface Metadata {
   duration?: number | null;
   url: string;
   formats: FormatInfo[];
+  resolutions: ResolutionOption[];
 }
 
 export type JobStatus =
@@ -94,4 +103,18 @@ export interface ShareCreate {
 export interface MountResult {
   mounted: boolean;
   message?: string | null;
+}
+
+export interface FileEntry {
+  name: string;
+  path: string;
+  is_dir: boolean;
+  size?: number | null;
+  modified?: string | null;
+}
+
+export interface FileListResponse {
+  root: string;
+  path: string;
+  entries: FileEntry[];
 }

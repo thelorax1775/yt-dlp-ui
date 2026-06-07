@@ -1,5 +1,7 @@
 import type {
   DownloadRequest,
+  FileEntry,
+  FileListResponse,
   HistoryEntry,
   Job,
   Metadata,
@@ -77,4 +79,35 @@ export const api = {
 
   unmountShare: (id: number) =>
     handle<MountResult>(fetch(`/api/shares/${id}/unmount`, { method: "POST" })),
+
+  listFiles: (path = "") =>
+    handle<FileListResponse>(
+      fetch(`/api/files?path=${encodeURIComponent(path)}`)
+    ),
+
+  renameFile: (path: string, newName: string) =>
+    handle<FileEntry>(
+      fetch("/api/files/rename", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, new_name: newName }),
+      })
+    ),
+
+  deleteFile: (path: string) =>
+    handle<{ status: string }>(
+      fetch(`/api/files?path=${encodeURIComponent(path)}`, { method: "DELETE" })
+    ),
+
+  makeDir: (path: string, name: string) =>
+    handle<FileEntry>(
+      fetch("/api/files/mkdir", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path, name }),
+      })
+    ),
+
+  fileDownloadUrl: (path: string) =>
+    `/api/files/download?path=${encodeURIComponent(path)}`,
 };

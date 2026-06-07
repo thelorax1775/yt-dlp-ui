@@ -8,6 +8,8 @@ The current build is a working MVP. Below is what's done and what could come nex
 - [x] `DownloadManager`: queue, asyncio workers, safe subprocess (no shell)
 - [x] Metadata fetch via `yt-dlp --dump-single-json`
 - [x] Download: best video / best audio / custom format
+- [x] Resolution picker from the qualities available per video
+- [x] File manager: browse/rename/delete/download in the download folder (sandboxed)
 - [x] Live progress via SSE (progress %, speed, ETA, status)
 - [x] Cancel and retry jobs
 - [x] Download history persisted to SQLite
@@ -23,8 +25,8 @@ The current build is a working MVP. Below is what's done and what could come nex
 - [ ] **Authentication** — basic auth or session login before public exposure
 - [ ] **Playlist support** — currently `--no-playlist`; add opt-in playlist mode
       that expands into multiple jobs
-- [ ] **Format picker UI** — show the parsed `formats` list as a selectable table
-      instead of typing a raw format_id
+- [ ] **Full format-table picker** — resolution picker is done; optionally show
+      the complete `formats` list (codecs/fps/size) as a selectable table
 - [ ] **Live concurrency change** — resize the worker pool without a restart
 - [ ] **Pause/resume** downloads
 - [ ] **Clear history** / delete individual history entries + delete file option

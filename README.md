@@ -10,8 +10,13 @@ progress live — all from a clean browser UI.
 
 - **Home** — paste a URL, fetch metadata (thumbnail, title, uploader, duration),
   and download as **best video**, **best audio** (extracted), or a **custom format**.
+  Pick a specific **resolution** from the qualities actually available for that
+  video (e.g. 2160p / 1080p / 720p).
 - **Downloads** — live job list with progress bar, status, speed and ETA, updated
   in real time via Server-Sent Events. Cancel or retry any job.
+- **Files** — browse inside the download folder: navigate subfolders, **rename**,
+  **delete**, **download**, and create folders. All operations are sandboxed to
+  the download directory (no path traversal).
 - **History** — table of completed downloads with thumbnail, title, URL, date and
   saved file path.
 - **Settings** — configure default download folder, audio format, concurrent
@@ -36,18 +41,23 @@ progress live — all from a clean browser UI.
 argument-list elements, so shell metacharacters cannot be injected. URLs are
 validated before they ever reach the subprocess.
 
+The file manager confines every operation to the configured download folder:
+user-supplied paths are resolved with `os.path.realpath` and rejected if they
+escape the root, so `..` traversal and absolute paths cannot reach other files.
+
 ## Project Structure
 
 ```
 backend/
-  api/routes/      # info, downloads, history, settings, shares endpoints
-  services/        # download_manager.py, metadata.py, share_manager.py
+  api/routes/      # info, downloads, files, history, settings, shares
+  services/        # download_manager.py, metadata.py, share_manager.py,
+                   # files_manager.py
   models/          # database.py (SQLAlchemy), schemas.py (Pydantic)
   main.py          # FastAPI app + lifespan
 frontend/
-  app/             # home, downloads, history, settings pages
+  app/             # home, downloads, files, history, settings pages
   components/       # MetadataCard, JobCard, HistoryTable, SettingsForm,
-                    # SharesManager, Sidebar, PageHeader, EmptyState, ...
+                    # SharesManager, FileBrowser, Sidebar, PageHeader, ...
   lib/             # api.ts (typed fetch), types.ts
 docker-compose.yml
 nginx.conf         # example reverse proxy
@@ -71,6 +81,11 @@ nginx.conf         # example reverse proxy
 | DELETE | `/api/shares/{id}`       | Remove a share (unmounts first)   |
 | POST   | `/api/shares/{id}/mount` | Mount a share                     |
 | POST   | `/api/shares/{id}/unmount` | Unmount a share                 |
+| GET    | `/api/files?path=`       | List a folder in the download dir |
+| DELETE | `/api/files?path=`       | Delete a file or folder           |
+| POST   | `/api/files/rename`      | Rename a file or folder           |
+| POST   | `/api/files/mkdir`       | Create a folder                   |
+| GET    | `/api/files/download?path=` | Download a file                |
 
 ---
 

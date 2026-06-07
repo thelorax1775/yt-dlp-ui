@@ -7,11 +7,19 @@ class FormatInfo(BaseModel):
     format_id: str
     ext: str
     resolution: Optional[str] = None
+    height: Optional[int] = None
     fps: Optional[float] = None
     vcodec: Optional[str] = None
     acodec: Optional[str] = None
     filesize: Optional[int] = None
     format_note: Optional[str] = None
+
+
+class ResolutionOption(BaseModel):
+    height: int
+    label: str  # e.g. "1080p"
+    ext: Optional[str] = None
+    filesize: Optional[int] = None
 
 
 class MetadataResponse(BaseModel):
@@ -21,6 +29,7 @@ class MetadataResponse(BaseModel):
     duration: Optional[int] = None
     url: str
     formats: list[FormatInfo] = []
+    resolutions: list[ResolutionOption] = []
 
 
 class DownloadRequest(BaseModel):
@@ -117,3 +126,43 @@ class ShareResponse(BaseModel):
 class MountResult(BaseModel):
     mounted: bool
     message: Optional[str] = None
+
+
+class FileEntry(BaseModel):
+    name: str
+    path: str  # path relative to the download root
+    is_dir: bool
+    size: Optional[int] = None
+    modified: Optional[datetime] = None
+
+
+class FileListResponse(BaseModel):
+    root: str  # absolute download root
+    path: str  # current path relative to root ("" = root)
+    entries: list[FileEntry] = []
+
+
+class RenameRequest(BaseModel):
+    path: str  # existing path relative to root
+    new_name: str  # new base name (no slashes)
+
+    @field_validator("new_name")
+    @classmethod
+    def validate_new_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or "/" in v or "\\" in v or v in (".", ".."):
+            raise ValueError("Invalid file name")
+        return v
+
+
+class MkdirRequest(BaseModel):
+    path: str  # parent path relative to root
+    name: str
+
+    @field_validator("name")
+    @classmethod
+    def validate_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v or "/" in v or "\\" in v or v in (".", ".."):
+            raise ValueError("Invalid folder name")
+        return v

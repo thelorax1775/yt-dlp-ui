@@ -15,6 +15,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { api } from "@/lib/api";
+import { formatBytes } from "@/lib/utils";
 import type { Metadata } from "@/lib/types";
 
 interface Props {
@@ -25,13 +26,22 @@ type Mode = "bestvideo" | "bestaudio" | "custom";
 
 export function DownloadForm({ metadata }: Props) {
   const [mode, setMode] = useState<Mode>("bestvideo");
+  const [resolution, setResolution] = useState<string>("best");
   const [customFormat, setCustomFormat] = useState("");
   const [submitting, setSubmitting] = useState(false);
+
+  const resolutions = metadata.resolutions ?? [];
+
+  function videoFormatId(): string {
+    if (resolution === "best") return "bestvideo";
+    const h = Number(resolution);
+    return `bestvideo[height<=${h}]+bestaudio/best[height<=${h}]`;
+  }
 
   async function handleDownload() {
     const formatId =
       mode === "bestvideo"
-        ? "bestvideo"
+        ? videoFormatId()
         : mode === "bestaudio"
         ? "bestaudio"
         : customFormat.trim();
@@ -81,6 +91,26 @@ export function DownloadForm({ metadata }: Props) {
             </SelectContent>
           </Select>
         </div>
+
+        {mode === "bestvideo" && resolutions.length > 0 && (
+          <div className="grid gap-2">
+            <Label>Resolution</Label>
+            <Select value={resolution} onValueChange={setResolution}>
+              <SelectTrigger>
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="best">Best available</SelectItem>
+                {resolutions.map((r) => (
+                  <SelectItem key={r.height} value={String(r.height)}>
+                    {r.label}
+                    {r.filesize ? ` · ~${formatBytes(r.filesize)}` : ""}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+          </div>
+        )}
 
         {mode === "custom" && (
           <div className="grid gap-2">
