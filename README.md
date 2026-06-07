@@ -73,11 +73,20 @@ nginx.conf         # example reverse proxy
 - `yt-dlp` and `ffmpeg` available on your `PATH`
   (or set their absolute paths in **Settings**)
 
+Install `yt-dlp` + `ffmpeg` for your OS:
+
 ```bash
 # Debian/Ubuntu
 sudo apt install ffmpeg
 sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
 sudo chmod a+rx /usr/local/bin/yt-dlp
+
+# macOS (Homebrew)
+brew install yt-dlp ffmpeg
+
+# Windows (winget) — or download the .exe files and add them to PATH
+winget install yt-dlp.yt-dlp
+winget install Gyan.FFmpeg
 ```
 
 ### 1. Backend
@@ -106,6 +115,47 @@ so no CORS setup is needed. Override the target with `BACKEND_URL` if your
 backend runs elsewhere.
 
 Open **http://localhost:3000** and paste a URL.
+
+---
+
+## Platform Support
+
+The app runs on **Linux, macOS, and Windows**. Linux is the primary, fully
+documented target; the easiest cross-platform path everywhere is **Docker**,
+which makes the runtime identical on all three.
+
+| Platform | Status | Notes |
+| -------- | ------ | ----- |
+| **Linux**   | ✅ Fully supported | Intended target. Docker, systemd, and nginx instructions all apply. |
+| **macOS**   | ✅ Works natively  | Install deps with `brew install yt-dlp ffmpeg`. Docker Desktop also works. |
+| **Windows** | ⚠️ Works (some setup) | Easiest via **Docker Desktop (WSL2)**. Native runs need yt-dlp/ffmpeg on PATH. |
+
+### macOS
+
+- Install dependencies: `brew install yt-dlp ffmpeg`.
+- Follow the same **Backend** / **Frontend** dev steps above.
+- The default download folder `/downloads` isn't writable — open **Settings**
+  and change it to e.g. `/Users/<you>/Downloads`.
+- Docker Compose works too (Docker Desktop).
+
+### Windows
+
+The smoothest option is **Docker Desktop** with the WSL2 backend — then just run
+`docker compose up -d --build` and everything behaves exactly like Linux.
+
+To run natively instead:
+
+- Activate the venv with `venv\Scripts\activate` (PowerShell: `venv\Scripts\Activate.ps1`).
+- Install `yt-dlp` and `ffmpeg` and ensure they're on `PATH`, **or** set their
+  absolute `.exe` paths in **Settings** (e.g. `C:\tools\yt-dlp.exe`).
+- Change the download folder in **Settings** to a real path such as
+  `C:\Users\<you>\Downloads` (the `/downloads` default points at `C:\downloads`).
+- Requires a recent Python (3.11+); `asyncio` subprocess support uses the default
+  Proactor event loop, which is standard on modern Python + uvicorn.
+
+> **Tip (all platforms):** if a download fails immediately, it's almost always
+> because `yt-dlp` or `ffmpeg` can't be found. Verify them in **Settings** or run
+> `yt-dlp --version` / `ffmpeg -version` in the same shell that starts the backend.
 
 ---
 
