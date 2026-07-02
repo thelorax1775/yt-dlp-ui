@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { Loader2, Save } from "lucide-react";
+import { Cookie, Loader2, Save, Trash2 } from "lucide-react";
 import { toast } from "sonner";
 import { Button } from "@/components/ui/button";
 import {
@@ -13,6 +13,7 @@ import {
 } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Select,
   SelectContent,
@@ -28,6 +29,10 @@ const AUDIO_FORMATS = ["mp3", "m4a", "opus", "flac", "wav", "aac"];
 export function SettingsForm() {
   const [settings, setSettings] = useState<Settings | null>(null);
   const [saving, setSaving] = useState(false);
+  // Cookie text is write-only (the API never returns it), so it lives in its
+  // own state and is only sent when the user actually pasted something.
+  const [cookiesText, setCookiesText] = useState("");
+  const [clearingCookies, setClearingCookies] = useState(false);
 
   useEffect(() => {
     (async () => {
@@ -49,8 +54,12 @@ export function SettingsForm() {
     if (!settings) return;
     setSaving(true);
     try {
-      const saved = await api.updateSettings(settings);
+      const payload = cookiesText.trim()
+        ? { ...settings, cookies_content: cookiesText }
+        : settings;
+      const saved = await api.updateSettings(payload);
       setSettings(saved);
+      setCookiesText("");
       toast.success("Settings saved");
     } catch (e) {
       toast.error("Save failed", {
@@ -58,6 +67,22 @@ export function SettingsForm() {
       });
     } finally {
       setSaving(false);
+    }
+  }
+
+  async function handleClearCookies() {
+    setClearingCookies(true);
+    try {
+      const saved = await api.updateSettings({ cookies_content: "" });
+      setSettings(saved);
+      setCookiesText("");
+      toast.success("Cookies cleared");
+    } catch (e) {
+      toast.error("Failed to clear cookies", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    } finally {
+      setClearingCookies(false);
     }
   }
 
@@ -149,6 +174,87 @@ export function SettingsForm() {
               onChange={(e) => update("ffmpeg_path", e.target.value)}
               placeholder="ffmpeg"
             />
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-base">
+            <Cookie className="h-4 w-4" /> Cookies / authentication
+          </CardTitle>
+          <CardDescription>
+            YouTube may require sign-in cookies (&quot;Sign in to confirm
+            you&apos;re not a bot&quot;). Export cookies from your browser with a
+            &quot;Get cookies.txt&quot; extension and paste them here — see the{" "}
+            <a
+              href="https://github.com/yt-dlp/yt-dlp/wiki/FAQ#how-do-i-pass-cookies-to-yt-dlp"
+              target="_blank"
+              rel="noreferrer"
+              className="underline underline-offset-2"
+            >
+              yt-dlp FAQ
+            </a>
+            .
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="grid gap-5">
+          <div className="grid gap-2">
+            <div className="flex items-center justify-between">
+              <Label>Cookies (Netscape cookies.txt format)</Label>
+              {settings.cookies_configured && (
+                <span className="text-xs text-emerald-600 dark:text-emerald-400">
+                  Cookies are configured
+                </span>
+              )}
+            </div>
+            <Textarea
+              value={cookiesText}
+              onChange={(e) => setCookiesText(e.target.value)}
+              placeholder={
+                settings.cookies_configured
+                  ? "Cookies are saved. Paste new content to replace them."
+                  : "# Netscape HTTP Cookie File\n.youtube.com\tTRUE\t/\tTRUE\t…"
+              }
+              rows={6}
+              spellCheck={false}
+              className="font-mono text-xs"
+            />
+            <p className="text-xs text-muted-foreground">
+              Stored on the server and passed to yt-dlp via --cookies. Saved
+              cookies are never shown here again.
+            </p>
+            {settings.cookies_configured && (
+              <div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={handleClearCookies}
+                  disabled={clearingCookies}
+                >
+                  {clearingCookies ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Trash2 className="h-4 w-4" />
+                  )}
+                  Clear cookies
+                </Button>
+              </div>
+            )}
+          </div>
+
+          <div className="grid gap-2">
+            <Label>Cookies file path (advanced)</Label>
+            <Input
+              value={settings.cookies_file_path ?? ""}
+              onChange={(e) => update("cookies_file_path", e.target.value)}
+              placeholder="/config/cookies.txt"
+            />
+            <p className="text-xs text-muted-foreground">
+              Use an existing cookies file on the server instead (e.g. mounted
+              into the container). Takes precedence over pasted cookies.
+            </p>
           </div>
         </CardContent>
       </Card>

@@ -25,9 +25,12 @@ export default function HomePage() {
       const data = await api.fetchMetadata(url.trim());
       setMetadata(data);
     } catch (err) {
-      toast.error("Could not fetch metadata", {
-        description: err instanceof Error ? err.message : String(err),
-      });
+      let description = err instanceof Error ? err.message : String(err);
+      if (/sign in to confirm|not a bot|--cookies/i.test(description)) {
+        description +=
+          "\n\nTip: paste your browser cookies in Settings → Cookies / authentication to fix this.";
+      }
+      toast.error("Could not fetch metadata", { description });
     } finally {
       setLoading(false);
     }

@@ -6,6 +6,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from api.routes import downloads, files, history, info, settings, shares
 from models.database import init_db, seed_settings
+from services.cookies import ensure_cookies_file
 from services.download_manager import manager
 from services.share_manager import auto_mount_all
 
@@ -16,6 +17,7 @@ logging.basicConfig(level=logging.INFO)
 async def lifespan(app: FastAPI):
     await init_db()
     await seed_settings()
+    await ensure_cookies_file()
     await auto_mount_all()
     await manager.start()
     yield
@@ -24,10 +26,12 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(title="yt-dlp Web UI", version="0.1.0", lifespan=lifespan)
 
+# No cookie/credential auth is used, so credentials stay disabled: the spec
+# forbids allow_origins=["*"] combined with allow_credentials=True, and
+# browsers reject such responses outright.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
-    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )

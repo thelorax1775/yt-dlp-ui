@@ -4,6 +4,7 @@ import logging
 import os
 import re
 import uuid
+from collections import deque
 from datetime import datetime
 from typing import AsyncGenerator, Optional
 
@@ -14,6 +15,7 @@ from models.database import (
     SettingsModel,
 )
 from models.schemas import DownloadRequest, JobResponse
+from services.cookies import resolve_cookies_args
 
 logger = logging.getLogger(__name__)
 
@@ -29,6 +31,11 @@ PROGRESS_RE = re.compile(
 
 # yt-dlp prints the final merged/destination path with these markers.
 DEST_RE = re.compile(r"\[(?:download|Merger|ExtractAudio)\].*?(?:Destination:|to|into)\s+\"?(.+?)\"?$")
+
+# Emitted by our `--print after_move:...` flag once the final file is in place;
+# more reliable than DEST_RE, which stays as a fallback for older yt-dlp.
+FILEPATH_PRINT_TEMPLATE = "after_move:OUTPATH %(filepath)s"
+FILEPATH_RE = re.compile(r"^OUTPATH (.+)$")
 
 
 class Job:
@@ -165,8 +172,9 @@ class DownloadManager:
         q: asyncio.Queue = asyncio.Queue()
         self._subscribers.append(q)
         try:
-            # send current snapshot immediately
-            for job in self._jobs.values():
+            # send current snapshot immediately (copy: q.put awaits, and a
+            # concurrent enqueue() would mutate the dict mid-iteration)
+            for job in list(self._jobs.values()):
                 await q.put(job.to_dict())
             while True:
                 data = await q.get()
@@ -223,11 +231,17 @@ class DownloadManager:
             "--no-playlist",
             "--newline",
             "--no-colors",
+            # --print implies --quiet, so force progress back on to keep the
+            # progress-template lines flowing.
+            "--progress",
             "--progress-template",
             PROGRESS_TEMPLATE,
+            "--print",
+            FILEPATH_PRINT_TEMPLATE,
             "-o",
             output_template,
         ]
+        args += resolve_cookies_args(settings)
 
         # Only pass --ffmpeg-location when a real path is configured.
         # yt-dlp finds ffmpeg on PATH automatically; passing the bare name
@@ -299,6 +313,9 @@ class DownloadManager:
         cancel_event = self._cancel_events.get(job.id)
 
         last_dest: Optional[str] = None
+        final_path: Optional[str] = None
+        error_lines: list[str] = []
+        tail: deque[str] = deque(maxlen=8)
         assert proc.stdout is not None
         while True:
             if cancel_event and cancel_event.is_set():
@@ -323,6 +340,16 @@ class DownloadManager:
                 await self._broadcast(job)
                 continue
 
+            if line.strip():
+                tail.append(line.strip())
+            if line.startswith("ERROR") and len(error_lines) < 5:
+                error_lines.append(line.strip())
+
+            printed = FILEPATH_RE.match(line)
+            if printed:
+                final_path = printed.group(1).strip()
+                continue
+
             dest = DEST_RE.search(line)
             if dest:
                 last_dest = dest.group(1).strip()
@@ -342,15 +369,20 @@ class DownloadManager:
             job.progress = 100.0
             job.speed = None
             job.eta = None
-            if last_dest:
-                job.file_path = last_dest
+            if final_path or last_dest:
+                job.file_path = final_path or last_dest
             job.updated_at = datetime.utcnow()
             await self._persist_job(job)
             await self._write_history(job)
             await self._broadcast(job)
         else:
             job.status = "failed"
-            job.error = f"yt-dlp exited with code {returncode}"
+            if error_lines:
+                job.error = "\n".join(error_lines)
+            elif tail:
+                job.error = "\n".join(tail)
+            else:
+                job.error = f"yt-dlp exited with code {returncode}"
             job.updated_at = datetime.utcnow()
             await self._persist_job(job)
             await self._broadcast(job)
@@ -362,6 +394,7 @@ class DownloadManager:
                 "--dump-single-json",
                 "--no-playlist",
                 "--no-warnings",
+                *resolve_cookies_args(settings),
                 job.url,
             ]
             proc = await asyncio.create_subprocess_exec(

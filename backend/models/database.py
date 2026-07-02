@@ -7,6 +7,10 @@ from sqlalchemy.orm import DeclarativeBase
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "./ytdlp_ui.db")
 DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
 
+# Directory holding the DB file; managed data (e.g. cookies.txt) lives here
+# so it persists alongside the database volume.
+DATA_DIR = os.path.dirname(os.path.abspath(DATABASE_PATH))
+
 engine = create_async_engine(DATABASE_URL, echo=False)
 AsyncSessionLocal = async_sessionmaker(engine, expire_on_commit=False)
 
@@ -24,6 +28,12 @@ class SettingsModel(Base):
     concurrent_downloads = Column(Integer, nullable=False, default=2)
     ytdlp_path = Column(Text, nullable=False, default="yt-dlp")
     ffmpeg_path = Column(Text, nullable=False, default="ffmpeg")
+    # Pasted Netscape-format cookies.txt content (source of record; a copy is
+    # materialized to a file for yt-dlp, which rotates cookies in that file).
+    cookies_content = Column(Text, nullable=True)
+    # Optional explicit cookies file path (e.g. mounted into the container);
+    # takes precedence over the managed file when set.
+    cookies_file_path = Column(Text, nullable=True)
 
 
 class JobModel(Base):
@@ -74,6 +84,19 @@ class ShareModel(Base):
 async def init_db() -> None:
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+        await _migrate_settings_columns(conn)
+
+
+async def _migrate_settings_columns(conn) -> None:
+    # create_all never adds columns to an existing table, so add any
+    # settings columns introduced after the table was first created.
+    result = await conn.exec_driver_sql("PRAGMA table_info(settings)")
+    existing = {row[1] for row in result.fetchall()}
+    for column in ("cookies_content", "cookies_file_path"):
+        if column not in existing:
+            await conn.exec_driver_sql(
+                f"ALTER TABLE settings ADD COLUMN {column} TEXT"
+            )
 
 
 async def seed_settings() -> None:

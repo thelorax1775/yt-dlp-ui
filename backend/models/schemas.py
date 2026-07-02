@@ -1,6 +1,6 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator
 
 
 class FormatInfo(BaseModel):
@@ -76,14 +76,20 @@ class SettingsResponse(BaseModel):
     concurrent_downloads: int
     ytdlp_path: str
     ffmpeg_path: str
+    # cookie text is write-only; only expose whether cookies are set up
+    cookies_configured: bool = False
+    cookies_file_path: Optional[str] = None
 
 
 class SettingsUpdate(BaseModel):
     download_folder: Optional[str] = None
     audio_format: Optional[str] = None
-    concurrent_downloads: Optional[int] = None
+    concurrent_downloads: Optional[int] = Field(None, ge=1, le=10)
     ytdlp_path: Optional[str] = None
     ffmpeg_path: Optional[str] = None
+    # omitted = unchanged, "" = clear, non-empty = replace
+    cookies_content: Optional[str] = None
+    cookies_file_path: Optional[str] = None
 
 
 class ShareBase(BaseModel):

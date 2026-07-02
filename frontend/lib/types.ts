@@ -66,6 +66,13 @@ export interface Settings {
   concurrent_downloads: number;
   ytdlp_path: string;
   ffmpeg_path: string;
+  cookies_configured: boolean;
+  cookies_file_path?: string | null;
+}
+
+// Cookie text is write-only: it can be sent in updates but is never returned.
+export interface SettingsUpdate extends Partial<Settings> {
+  cookies_content?: string;
 }
 
 export interface DownloadRequest {

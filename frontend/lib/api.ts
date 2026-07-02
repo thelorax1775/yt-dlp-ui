@@ -7,6 +7,7 @@ import type {
   Metadata,
   MountResult,
   Settings,
+  SettingsUpdate,
   Share,
   ShareCreate,
 } from "./types";
@@ -51,7 +52,7 @@ export const api = {
 
   getSettings: () => handle<Settings>(fetch("/api/settings")),
 
-  updateSettings: (data: Partial<Settings>) =>
+  updateSettings: (data: SettingsUpdate) =>
     handle<Settings>(
       fetch("/api/settings", {
         method: "POST",

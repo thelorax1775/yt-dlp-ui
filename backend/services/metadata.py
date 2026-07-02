@@ -5,23 +5,34 @@ from typing import Optional
 
 from models.database import AsyncSessionLocal, SettingsModel
 from models.schemas import FormatInfo, MetadataResponse, ResolutionOption
+from services.cookies import resolve_cookies_args
 
 logger = logging.getLogger(__name__)
 
 
-async def _get_ytdlp_path() -> str:
+async def _get_settings() -> Optional[SettingsModel]:
     async with AsyncSessionLocal() as session:
-        settings = await session.get(SettingsModel, 1)
-        return settings.ytdlp_path if settings else "yt-dlp"
+        return await session.get(SettingsModel, 1)
+
+
+def extract_error(output: str) -> str:
+    """Pull the ERROR line(s) out of yt-dlp output, falling back to the tail."""
+    lines = [ln.strip() for ln in output.splitlines() if ln.strip()]
+    errors = [ln for ln in lines if ln.startswith("ERROR")]
+    if errors:
+        return "\n".join(errors[:5])
+    return "\n".join(lines[-5:]) if lines else "unknown error"
 
 
 async def fetch_metadata(url: str) -> MetadataResponse:
-    ytdlp_path = await _get_ytdlp_path()
+    settings = await _get_settings()
+    ytdlp_path = settings.ytdlp_path if settings else "yt-dlp"
     args = [
         ytdlp_path,
         "--dump-single-json",
         "--no-playlist",
         "--no-warnings",
+        *resolve_cookies_args(settings),
         url,
     ]
 
@@ -33,7 +44,7 @@ async def fetch_metadata(url: str) -> MetadataResponse:
     stdout, stderr = await proc.communicate()
 
     if proc.returncode != 0:
-        err = stderr.decode(errors="replace").strip()
+        err = extract_error(stderr.decode(errors="replace"))
         raise ValueError(f"yt-dlp failed: {err}")
 
     raw = json.loads(stdout.decode(errors="replace"))
