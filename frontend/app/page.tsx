@@ -29,6 +29,9 @@ export default function HomePage() {
       if (/sign in to confirm|not a bot|--cookies/i.test(description)) {
         description +=
           "\n\nTip: paste your browser cookies in Settings → Cookies / authentication to fix this.";
+      } else if (/requested format is not available/i.test(description)) {
+        description +=
+          "\n\nTip: this usually means yt-dlp is outdated. Restart the backend container (it auto-updates yt-dlp on start) or update yt-dlp manually, then try again.";
       }
       toast.error("Could not fetch metadata", { description });
     } finally {

@@ -166,6 +166,14 @@ export function SettingsForm() {
               onChange={(e) => update("ytdlp_path", e.target.value)}
               placeholder="yt-dlp"
             />
+            <p className="text-xs text-muted-foreground">
+              {settings.ytdlp_version
+                ? `Installed version: ${settings.ytdlp_version}. `
+                : "yt-dlp not found at this path. "}
+              Keep yt-dlp current — outdated versions fail on YouTube (e.g.
+              &quot;Requested format is not available&quot;). In Docker it
+              updates automatically on container restart.
+            </p>
           </div>
           <div className="grid gap-2">
             <Label>ffmpeg path</Label>

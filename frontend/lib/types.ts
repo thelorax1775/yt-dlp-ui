@@ -68,6 +68,7 @@ export interface Settings {
   ffmpeg_path: string;
   cookies_configured: boolean;
   cookies_file_path?: string | null;
+  ytdlp_version?: string | null;
 }
 
 // Cookie text is write-only: it can be sent in updates but is never returned.

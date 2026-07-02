@@ -20,4 +20,8 @@ RUN mkdir -p /downloads
 
 EXPOSE 8000
 
+# Upgrades yt-dlp on every container start (disable with YTDLP_AUTO_UPDATE=0).
+RUN chmod +x /app/entrypoint.sh
+ENTRYPOINT ["/app/entrypoint.sh"]
+
 CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8000"]

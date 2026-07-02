@@ -79,6 +79,8 @@ class SettingsResponse(BaseModel):
     # cookie text is write-only; only expose whether cookies are set up
     cookies_configured: bool = False
     cookies_file_path: Optional[str] = None
+    # informational: version reported by the configured yt-dlp binary
+    ytdlp_version: Optional[str] = None
 
 
 class SettingsUpdate(BaseModel):

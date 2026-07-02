@@ -231,6 +231,15 @@ docker compose up -d --build
 > the path mounted inside the backend container. Leave it as `/downloads` when
 > running via Docker.
 
+**Keeping yt-dlp fresh:** YouTube changes constantly and an outdated yt-dlp
+starts failing within weeks (bot checks, "Requested format is not available").
+The backend container upgrades yt-dlp automatically on every start, so a plain
+`docker compose restart backend` picks up the latest release. Set
+`YTDLP_AUTO_UPDATE=0` in `docker-compose.yml` to pin the bundled version
+instead. The installed version is shown in **Settings → Tool paths**.
+
+**Updating the app itself:** `git pull`, then `docker compose up -d --build`.
+
 Put nginx (or any reverse proxy) in front of port 3000 for TLS — see below.
 
 ### Option B — Bare metal (systemd + nginx)

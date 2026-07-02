@@ -1,3 +1,5 @@
+import asyncio
+
 from fastapi import APIRouter, HTTPException
 
 from models.database import AsyncSessionLocal, SettingsModel
@@ -10,8 +12,29 @@ from services.cookies import (
 
 router = APIRouter()
 
+# yt-dlp version per binary path, resolved once per process (the entrypoint
+# updates yt-dlp at container start, so it can't change mid-run).
+_version_cache: dict[str, str | None] = {}
 
-def _to_response(row: SettingsModel) -> SettingsResponse:
+
+async def _get_ytdlp_version(ytdlp_path: str) -> str | None:
+    if ytdlp_path not in _version_cache:
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                ytdlp_path,
+                "--version",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.DEVNULL,
+            )
+            stdout, _ = await asyncio.wait_for(proc.communicate(), timeout=10)
+            version = stdout.decode(errors="replace").strip()
+            _version_cache[ytdlp_path] = version if proc.returncode == 0 else None
+        except (OSError, asyncio.TimeoutError):
+            _version_cache[ytdlp_path] = None
+    return _version_cache[ytdlp_path]
+
+
+async def _to_response(row: SettingsModel) -> SettingsResponse:
     return SettingsResponse(
         download_folder=row.download_folder,
         audio_format=row.audio_format,
@@ -20,6 +43,7 @@ def _to_response(row: SettingsModel) -> SettingsResponse:
         ffmpeg_path=row.ffmpeg_path,
         cookies_configured=bool(row.cookies_content or row.cookies_file_path),
         cookies_file_path=row.cookies_file_path,
+        ytdlp_version=await _get_ytdlp_version(row.ytdlp_path),
     )
 
 
@@ -31,7 +55,7 @@ async def get_settings():
             row = SettingsModel(id=1)
             session.add(row)
             await session.commit()
-        return _to_response(row)
+        return await _to_response(row)
 
 
 @router.post("/settings", response_model=SettingsResponse)
@@ -71,4 +95,4 @@ async def update_settings(update: SettingsUpdate):
                 setattr(row, key, value)
         await session.commit()
         await session.refresh(row)
-        return _to_response(row)
+        return await _to_response(row)
