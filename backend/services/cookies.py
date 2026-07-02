@@ -11,6 +11,12 @@ logger = logging.getLogger(__name__)
 # it from the stored copy on every run would invalidate the rotated session.
 COOKIES_PATH = os.path.join(DATA_DIR, "cookies.txt")
 
+# YouTube's default client chain includes clients (e.g. android vr) that do
+# not support account cookies; sending cookies through them makes YouTube 403
+# the media URLs mid-download. The tv client is yt-dlp's recommended client
+# for cookie auth, so pin it whenever cookies are in play.
+_COOKIE_CLIENT_ARGS = ["--extractor-args", "youtube:player_client=tv"]
+
 
 def validate_cookies_content(content: str) -> bool:
     """Accept anything that plausibly is Netscape cookies.txt format."""
@@ -43,9 +49,9 @@ def resolve_cookies_args(settings: SettingsModel | None) -> list[str]:
     if settings is not None:
         explicit = (settings.cookies_file_path or "").strip()
         if explicit:
-            return ["--cookies", explicit]
+            return ["--cookies", explicit, *_COOKIE_CLIENT_ARGS]
     if os.path.isfile(COOKIES_PATH) and os.path.getsize(COOKIES_PATH) > 0:
-        return ["--cookies", COOKIES_PATH]
+        return ["--cookies", COOKIES_PATH, *_COOKIE_CLIENT_ARGS]
     return []
 
 
