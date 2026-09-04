@@ -11,11 +11,13 @@ logger = logging.getLogger(__name__)
 # it from the stored copy on every run would invalidate the rotated session.
 COOKIES_PATH = os.path.join(DATA_DIR, "cookies.txt")
 
-# YouTube's default client chain includes clients (e.g. android vr) that do
-# not support account cookies; sending cookies through them makes YouTube 403
-# the media URLs mid-download. The tv client is yt-dlp's recommended client
-# for cookie auth, so pin it whenever cookies are in play.
-_COOKIE_CLIENT_ARGS = ["--extractor-args", "youtube:player_client=tv"]
+# Previously pinned to player_client=tv here, on the reasoning that YouTube's
+# default client chain includes clients that 403 the media URL when cookies
+# are attached. As of 2026-09-04 the tv client itself fails every request
+# ("The page needs to be reloaded" — confirmed via direct yt-dlp runs), while
+# yt-dlp's default client selection succeeds with the same cookies file. If
+# 403s with cookies come back, re-pin here rather than reintroducing tv blind.
+_COOKIE_CLIENT_ARGS: list[str] = []
 
 
 def validate_cookies_content(content: str) -> bool:
