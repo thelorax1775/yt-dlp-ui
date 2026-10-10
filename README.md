@@ -24,6 +24,13 @@ progress live — all from a clean browser UI.
 - **Network shares** — mount **SMB/CIFS** or **NFS** shares from the UI and save
   downloads straight to your NAS. Mount/unmount on demand, auto-mount on startup,
   and "use as download folder" in one click.
+- **Cookie auth** — paste a Netscape `cookies.txt` export (or point at an
+  existing cookies file) in **Settings** so yt-dlp can fetch age-gated or
+  sign-in-required videos. The pasted copy is stored in the data dir with `0600`
+  permissions.
+- **Fresh yt-dlp** — the Docker backend upgrades yt-dlp on every start and
+  bundles a JS runtime for YouTube's challenge solver; the installed version is
+  shown in **Settings**.
 - **Responsive UI** — works on desktop and mobile (collapsing nav, no overflow).
 
 ## Tech Stack
@@ -112,6 +119,24 @@ to remount it on backend startup.
 >
 > Mounts happen via `mount`/`umount` with an explicit argument list (never a
 > shell), so share names and credentials can't inject commands.
+
+---
+
+## Configuration
+
+There are no config files to copy; runtime settings (download folder, audio
+format, concurrency, tool paths, cookies, shares) live in the SQLite database
+and are edited in the **Settings** page. Environment variables:
+
+| Variable | Where | Default | Purpose |
+| -------- | ----- | ------- | ------- |
+| `DATABASE_PATH` | backend | `./ytdlp_ui.db` | SQLite file; its directory also holds the managed `cookies.txt` |
+| `YTDLP_AUTO_UPDATE` | backend container | `1` | Upgrade yt-dlp on container start; `0` pins the bundled version |
+| `BACKEND_URL` | frontend (build time) | `http://localhost:8000` | Target of the `/api/*` proxy |
+| `DOWNLOAD_DIR` | `docker compose` | `./downloads` | Host folder mounted at `/downloads` |
+
+Never commit `cookies.txt` or the database: both can contain session cookies
+and share credentials. `data/` and `*.db` are already gitignored.
 
 ---
 
@@ -249,7 +274,7 @@ Put nginx (or any reverse proxy) in front of port 3000 for TLS — see below.
 ```bash
 sudo mkdir -p /opt/ytdlp-ui
 sudo chown $USER /opt/ytdlp-ui
-git clone <your-repo> /opt/ytdlp-ui
+git clone https://github.com/thelorax1775/yt-dlp-ui.git /opt/ytdlp-ui
 cd /opt/ytdlp-ui
 
 # backend
@@ -316,6 +341,13 @@ sudo certbot --nginx -d ytdlp.example.com
 streams through immediately.
 
 ---
+
+## Status
+
+Working MVP, in personal use and maintained as YouTube changes (latest fixes
+cover 403s and cookie-auth client selection). There are no automated tests or
+CI yet, and no license file. Windows/macOS native runs are documented but less
+exercised than Docker on Linux.
 
 ## Notes & Limitations
 
