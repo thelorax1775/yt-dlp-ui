@@ -19,6 +19,8 @@ The current build is a working MVP. Below is what's done and what could come nex
 - [x] Responsive UI (collapsing mobile nav, no overflow, card layouts)
 - [x] Network shares: mount/unmount SMB & NFS, auto-mount, set as download folder
 - [x] Docker Compose, Dockerfiles, systemd units, nginx example
+- [x] Cookie auth (paste cookies.txt or set a cookies file path in Settings)
+- [x] yt-dlp auto-update on container start, EJS challenge solver runtime
 
 ## 🔜 Next up
 
@@ -47,4 +49,3 @@ The current build is a working MVP. Below is what's done and what could come nex
 - [ ] Download speed limit and rate options
 - [ ] Notifications (webhook / browser) on completion
 - [ ] Light/dark theme toggle (currently dark by default)
-- [ ] Cookie file upload for authenticated sources
