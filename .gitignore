@@ -29,3 +29,6 @@ Thumbs.db
 # so it doesn't match frontend/app/downloads/
 /downloads/
 /data/
+
+# Session cookies exported for yt-dlp
+cookies.txt
