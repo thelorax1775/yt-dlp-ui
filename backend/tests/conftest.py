@@ -202,3 +202,24 @@ def wait_for_job(client):
         raise AssertionError(f"job {job_id} did not reach {statuses}; last seen: {job}")
 
     return wait
+
+
+@pytest.fixture
+def wait_for_download(client, wait_for_job):
+    """Wait for a job to finish and for its history row to be written.
+
+    A job reports ``finished`` a moment before the worker has saved it. A test
+    that ends inside that gap shuts the app down while the worker is still
+    writing to the database, which can hang the shutdown.
+    """
+
+    def wait(job_id: str, timeout: float = 5.0):
+        job = wait_for_job(job_id, statuses=("finished",), timeout=timeout)
+        deadline = time.monotonic() + timeout
+        while time.monotonic() < deadline:
+            if any(h["id"] == job_id for h in client.get("/api/history").json()):
+                return job
+            time.sleep(0.02)
+        raise AssertionError(f"job {job_id} finished but never reached the history")
+
+    return wait

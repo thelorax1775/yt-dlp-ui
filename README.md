@@ -19,11 +19,18 @@ progress live — all from a clean browser UI.
   the download directory (no path traversal).
 - **History** — table of completed downloads with thumbnail, title, URL, date and
   saved file path.
-- **Settings** — configure default download folder, audio format, concurrent
-  downloads, and the `yt-dlp` / `ffmpeg` binary paths.
+- **Settings** — configure default download folder, an optional separate
+  **audio download folder**, audio format, concurrent downloads, and the
+  `yt-dlp` / `ffmpeg` binary paths.
+- **Audio downloads** — best-audio jobs are extracted to the chosen audio
+  format, tagged with the title/artist metadata yt-dlp knows (the uploader is
+  used when no artist is reported), and saved to the audio download folder when
+  one is set.
+- **Search API** — `GET /api/search` finds videos by words or lists a channel's
+  newest uploads (API only; there is no search page in the UI yet).
 - **Network shares** — mount **SMB/CIFS** or **NFS** shares from the UI and save
   downloads straight to your NAS. Mount/unmount on demand, auto-mount on startup,
-  and "use as download folder" in one click.
+  and "use as download folder" or "use as audio folder" in one click.
 - **Cookie auth** — paste a Netscape `cookies.txt` export (or point at an
   existing cookies file) in **Settings** so yt-dlp can fetch age-gated or
   sign-in-required videos. The pasted copy is stored in the data dir with `0600`
@@ -56,9 +63,9 @@ escape the root, so `..` traversal and absolute paths cannot reach other files.
 
 ```
 backend/
-  api/routes/      # info, downloads, files, history, settings, shares
+  api/routes/      # info, downloads, files, history, search, settings, shares
   services/        # download_manager.py, metadata.py, share_manager.py,
-                   # files_manager.py
+                   # files_manager.py, search.py
   models/          # database.py (SQLAlchemy), schemas.py (Pydantic)
   main.py          # FastAPI app + lifespan
 frontend/
@@ -75,14 +82,15 @@ nginx.conf         # example reverse proxy
 | Method | Path                     | Description                       |
 | ------ | ------------------------ | --------------------------------- |
 | GET    | `/api/info?url=`         | Fetch metadata for a URL          |
+| GET    | `/api/search?q=` / `?channel=` | Find videos by words, or list a channel's newest videos ([details](#search)) |
 | POST   | `/api/download`          | Queue a download job              |
 | GET    | `/api/jobs`              | List active/recent jobs           |
 | GET    | `/api/jobs/stream`       | SSE stream of live job updates    |
 | DELETE | `/api/jobs/{id}`         | Cancel a job                      |
 | POST   | `/api/jobs/{id}/retry`   | Retry a failed/cancelled job      |
 | GET    | `/api/history`           | List completed downloads          |
-| GET    | `/api/settings`          | Get settings                      |
-| POST   | `/api/settings`          | Update settings                   |
+| GET    | `/api/settings`          | Get settings (includes `audio_download_folder`) |
+| POST   | `/api/settings`          | Update settings (any subset of fields) |
 | GET    | `/api/shares`            | List network shares (+ mount state) |
 | POST   | `/api/shares`            | Add a network share               |
 | DELETE | `/api/shares/{id}`       | Remove a share (unmounts first)   |
@@ -93,6 +101,56 @@ nginx.conf         # example reverse proxy
 | POST   | `/api/files/rename`      | Rename a file or folder           |
 | POST   | `/api/files/mkdir`       | Create a folder                   |
 | GET    | `/api/files/download?path=` | Download a file                |
+
+### Search
+
+`GET /api/search` runs yt-dlp's own search and channel listing; it downloads
+nothing. Query parameters:
+
+| Parameter | Default | Meaning |
+| --------- | ------- | ------- |
+| `q` | – | Words to search for (`ytsearchN:`). |
+| `channel` | – | A YouTube channel URL or handle (`@name` or `name`). Lists that channel's videos, newest first. Takes precedence over `q`. |
+| `limit` | `5` | Number of results; values outside 1–10 are clamped. |
+| `latest_from_channel` | `false` | With `q`: take the channel of the top search hit and list its newest videos instead. |
+
+One of `q` or `channel` is required; without either the answer is `400`. A
+`channel` that is not a YouTube URL or handle, and a yt-dlp failure, are also
+`400` with the reason in `detail`.
+
+```bash
+curl 'http://localhost:8000/api/search?q=big+buck+bunny&limit=3'
+curl 'http://localhost:8000/api/search?channel=@blender'
+```
+
+Response shape (values are illustrative):
+
+```json
+{
+  "mode": "search",
+  "query": "big buck bunny",
+  "channel": null,
+  "resolved_channel": null,
+  "results": [
+    {
+      "id": "aqz-KE-bpKQ",
+      "title": "Big Buck Bunny",
+      "url": "https://www.youtube.com/watch?v=aqz-KE-bpKQ",
+      "uploader": "Blender",
+      "channel_url": "https://www.youtube.com/@blender",
+      "duration": 635,
+      "upload_date": "2014-11-10",
+      "view_count": 1000000
+    }
+  ]
+}
+```
+
+`mode` is `search` or `channel`; in channel mode `channel` holds the channel
+URL, and `resolved_channel` (`name`, `url`) is set when `latest_from_channel`
+picked it. Each result is completed with one extra yt-dlp metadata call (the
+listing itself carries no upload date), run one at a time, so a search takes a
+few seconds per result. Fields yt-dlp does not report are `null`.
 
 ---
 
@@ -106,8 +164,9 @@ Add a share under **Settings → Network shares**:
 - **NFS** — remote like `192.168.1.10:/export/media`.
 
 Pick a **mount point** (e.g. `/mnt/shares/media`), then **Mount**. Use the
-**Use** button to point the download folder at the share. Enable **auto-mount**
-to remount it on backend startup.
+**Use** button to point the download folder at the share, or the **Audio**
+button to make it the audio download folder. Enable **auto-mount** to remount
+it on backend startup.
 
 > **Privileges:** mounting network filesystems requires the backend process to
 > have mount capability.
@@ -124,9 +183,24 @@ to remount it on backend startup.
 
 ## Configuration
 
-There are no config files to copy; runtime settings (download folder, audio
-format, concurrency, tool paths, cookies, shares) live in the SQLite database
-and are edited in the **Settings** page. Environment variables:
+There are no config files to copy; runtime settings live in the SQLite
+database and are edited in the **Settings** page (or with `POST /api/settings`,
+which accepts any subset of these fields):
+
+| Setting | Default | Purpose |
+| ------- | ------- | ------- |
+| `download_folder` | `/downloads` | Where downloads are saved. |
+| `audio_download_folder` | unset | Separate folder for audio-only downloads (format "best audio"), e.g. a mounted music share. Unset or empty: audio goes to `download_folder` like everything else. Sending `""` clears it. The folder is created on first use. |
+| `audio_format` | `mp3` | Format audio-only downloads are converted to. |
+| `concurrent_downloads` | `2` | Parallel downloads, 1–10 (applies after a backend restart). |
+| `ytdlp_path` / `ffmpeg_path` | `yt-dlp` / `ffmpeg` | Binaries to use. |
+| `cookies_content` / `cookies_file_path` | unset | Cookie auth, see Features. |
+
+Network shares are stored in the same database. A database written by an older
+version is upgraded in place on startup: missing settings columns are added and
+existing values are kept.
+
+Environment variables:
 
 | Variable | Where | Default | Purpose |
 | -------- | ----- | ------- | ------- |
@@ -386,6 +460,8 @@ than Docker on Linux.
   worker pool is sized at startup).
 - This MVP has **no authentication** — run it behind a VPN, on a trusted LAN, or
   add HTTP basic auth at the nginx layer before exposing it publicly.
+- The **Files** page only browses the default download folder; files saved to
+  a separate audio download folder are not listed there.
 - Job state lives in memory plus SQLite; in-flight jobs do not resume after a
   backend restart (they can be retried from the Downloads/History view).
 
