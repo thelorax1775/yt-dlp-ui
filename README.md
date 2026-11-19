@@ -194,6 +194,35 @@ Open **http://localhost:3000** and paste a URL.
 
 ---
 
+## Running the checks
+
+GitHub Actions (`.github/workflows/ci.yml`) runs two jobs on every pull request
+and on every push to `main`: `backend` and `frontend`. Run the same checks
+locally before pushing.
+
+**Backend** (Python 3.12, pytest):
+
+```bash
+cd backend
+python -m venv .venv && source .venv/bin/activate
+pip install -r requirements-dev.txt   # runtime deps + pytest
+pytest -q
+```
+
+The tests use a temporary database and temporary folders, block network
+access, and replace `yt-dlp`, `mount` and `umount` with fakes, so they need
+neither of those programs nor root.
+
+**Frontend** (Node 22):
+
+```bash
+cd frontend
+npm ci
+npm run lint
+npm run typecheck
+npm run build
+```
+
 ## Platform Support
 
 The app runs on **Linux, macOS, and Windows**. Linux is the primary, fully
@@ -345,9 +374,11 @@ streams through immediately.
 ## Status
 
 Working MVP, in personal use and maintained as YouTube changes (latest fixes
-cover 403s and cookie-auth client selection). There are no automated tests or
-CI yet, and no license file. Windows/macOS native runs are documented but less
-exercised than Docker on Linux.
+cover 403s and cookie-auth client selection). A first set of backend tests and
+a CI workflow exist (see [Running the checks](#running-the-checks)); the
+frontend has lint, typecheck and build checks but no unit tests yet. There is
+no license file. Windows/macOS native runs are documented but less exercised
+than Docker on Linux.
 
 ## Notes & Limitations
 
