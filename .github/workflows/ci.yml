@@ -54,3 +54,32 @@ jobs:
         run: npm run typecheck
       - name: Build
         run: npm run build
+      - name: Smoke test (next start, /api rewrite, image endpoint off)
+        run: npm run test:smoke
+
+  frontend-image:
+    name: frontend-image
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build the image
+        run: docker build --build-arg BACKEND_URL=http://127.0.0.1:9 -t ytdlp-frontend:ci frontend
+      - name: Runs on Node 22 as an unprivileged user
+        run: |
+          test "$(docker run --rm ytdlp-frontend:ci id -un)" = node
+          docker run --rm ytdlp-frontend:ci node --version | grep -q '^v22\.'
+      - name: Serves pages and keeps the image endpoint off
+        run: |
+          docker run -d --name fe -p 3000:3000 ytdlp-frontend:ci
+          for i in $(seq 1 30); do
+            curl -fsS -o /dev/null http://127.0.0.1:3000/ && break
+            sleep 1
+          done
+          curl -fsS -o /dev/null http://127.0.0.1:3000/
+          code=$(curl -s -o /dev/null -w '%{http_code}' 'http://127.0.0.1:3000/_next/image?url=https%3A%2F%2Fexample.com%2F&w=64&q=75')
+          echo "image endpoint: $code"
+          test "$code" = 404 -o "$code" = 400
+      - name: Container logs
+        if: always()
+        run: docker logs fe || true

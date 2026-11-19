@@ -45,7 +45,7 @@ progress live — all from a clean browser UI.
 | Layer    | Technology                                          |
 | -------- | --------------------------------------------------- |
 | Backend  | Python, FastAPI, SQLAlchemy (async), SQLite, sse-starlette |
-| Frontend | Next.js 14 (App Router), TypeScript, TailwindCSS, shadcn/ui |
+| Frontend | Next.js 16 (App Router), TypeScript, TailwindCSS, shadcn/ui |
 | Tooling  | `yt-dlp` and `ffmpeg` installed on the host         |
 
 ### Security
@@ -219,7 +219,7 @@ and share credentials. `data/` and `*.db` are already gitignored.
 ### Prerequisites
 
 - Python 3.11+ and `pip`
-- Node.js 18+ and `npm`
+- Node.js 22 and `npm` (Next.js 16 needs at least 20.9)
 - `yt-dlp` and `ffmpeg` available on your `PATH`
   (or set their absolute paths in **Settings**)
 
@@ -270,9 +270,9 @@ Open **http://localhost:3000** and paste a URL.
 
 ## Running the checks
 
-GitHub Actions (`.github/workflows/ci.yml`) runs two jobs on every pull request
-and on every push to `main`: `backend` and `frontend`. Run the same checks
-locally before pushing.
+GitHub Actions (`.github/workflows/ci.yml`) runs three jobs on every pull
+request and on every push to `main`: `backend`, `frontend` and
+`frontend-image`. Run the same checks locally before pushing.
 
 **Backend** (Python 3.12, pytest):
 
@@ -295,7 +295,14 @@ npm ci
 npm run lint
 npm run typecheck
 npm run build
+npm run test:smoke
 ```
+
+`test:smoke` builds the app against a tiny fake backend, starts `next start`
+and checks that `/api/health` is proxied to the backend, that the pages render,
+and that `/_next/image` answers 404 without the server opening any outbound
+connection. CI also builds the frontend Docker image (`frontend-image` job)
+and checks that it runs on Node 22 as the unprivileged `node` user.
 
 ## Platform Support
 
@@ -343,6 +350,7 @@ To run natively instead:
 ### Option A — Docker Compose (recommended)
 
 The backend image installs `yt-dlp` and `ffmpeg` for you.
+The frontend image is built on Node 22 and runs as the unprivileged `node` user.
 
 ```bash
 # Choose where downloads land on the host (default ./downloads)

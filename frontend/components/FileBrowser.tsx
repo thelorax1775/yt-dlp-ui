@@ -88,6 +88,8 @@ export function FileBrowser() {
   }, []);
 
   useEffect(() => {
+    // Initial load on mount; the fetch helper sets loading/error state itself.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     load("");
   }, [load]);
 
