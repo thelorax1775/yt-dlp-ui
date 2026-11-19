@@ -10,8 +10,11 @@ const nextConfig = {
       },
     ];
   },
+  // The app only uses plain <img>, so the image optimizer is switched off:
+  // /_next/image answers 404 and the server never fetches a remote URL.
+  // Do not add remotePatterns here without a strict host allowlist.
   images: {
-    remotePatterns: [{ protocol: "https", hostname: "**" }],
+    unoptimized: true,
   },
 };
 
