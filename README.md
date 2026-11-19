@@ -15,8 +15,8 @@ progress live — all from a clean browser UI.
 - **Downloads** — live job list with progress bar, status, speed and ETA, updated
   in real time via Server-Sent Events. Cancel or retry any job.
 - **Files** — browse inside the download folder: navigate subfolders, **rename**,
-  **delete**, **download**, and create folders. All operations are sandboxed to
-  the download directory (no path traversal).
+  **delete**, **download**, and create folders. All operations are confined to
+  the download folder (no path traversal; see [Security](#security)).
 - **History** — table of completed downloads with thumbnail, title, URL, date and
   saved file path.
 - **Settings** — configure default download folder, an optional separate
@@ -55,9 +55,61 @@ progress live — all from a clean browser UI.
 argument-list elements, so shell metacharacters cannot be injected. URLs are
 validated before they ever reach the subprocess.
 
-The file manager confines every operation to the configured download folder:
-user-supplied paths are resolved with `os.path.realpath` and rejected if they
-escape the root, so `..` traversal and absolute paths cannot reach other files.
+**There is no login.** Anyone who can reach the app can use every feature,
+including the settings. The checks below limit what such a visitor (or a
+website open in your browser) can do; they do not replace a login. Keep the
+app on a trusted network or put authentication in front of it.
+
+**File manager.** Every operation is confined to the configured download
+folder: user-supplied paths are resolved with `os.path.realpath` and rejected
+with `400` if they leave it, so `..` traversal and absolute paths cannot reach
+other files. Symbolic links inside the folder:
+
+- Listing, downloading and creating folders follow links, and refuse a link
+  that leads outside the download folder.
+- **Delete** and **rename** act on the link itself, never on what it points
+  to. A link that points outside the folder (or at nothing) is still listed
+  and can be removed; its target is left alone.
+
+**Settings that are checked** (`POST /api/settings` answers `422` and stores
+nothing from that request when one is refused):
+
+- `download_folder` and `audio_download_folder` must be an absolute path that
+  exists as a folder or can be created by the backend. They must not be the
+  filesystem root, and must not be, contain or sit inside the **app data
+  directory** (the folder of `DATABASE_PATH`, which holds the database and
+  `cookies.txt`). This keeps the file manager from serving or deleting the
+  database and your cookies. Symbolic links are followed before checking.
+- `ytdlp_path` must be the bare name `yt-dlp` (found on `PATH`) or an absolute
+  path to an existing executable file whose name starts with `yt-dlp`
+  (`/usr/local/bin/yt-dlp`, `C:\tools\yt-dlp.exe`). Nothing else is ever
+  started, also not for the version check.
+
+A value that is already stored is not re-checked when it is posted back
+unchanged, so an older setup keeps working until that value is edited.
+
+What these checks do **not** cover: `ffmpeg_path` and `cookies_file_path` are
+passed to yt-dlp as given; a visitor can still point downloads at any other
+folder the backend may write to; and someone able to place an executable
+named `yt-dlp…` on the machine can have it run. Network shares are a separate
+topic.
+
+**Cross-site requests (CORS).** By default the backend sends no CORS headers,
+so a web page from another site cannot read any API response, and cannot send
+the requests that carry JSON or use `DELETE` (changing settings, starting
+downloads, adding shares, renaming, deleting): the browser asks first and gets
+no permission, and a JSON body sent under another content type is refused
+(this needs FastAPI 0.132 or newer, which `requirements.txt` requires). Three
+requests have no body and can still be fired blind by
+such a page, without seeing the answer: retrying an existing job and mounting
+or unmounting an already saved share. Closing that needs the login. The
+bundled frontend is not affected: it calls the API through its own `/api`
+proxy, which is same-origin. To let another
+web origin call the API directly, list it in `CORS_ORIGINS` (comma separated,
+exact scheme, host and port, e.g.
+`CORS_ORIGINS=https://tools.example.org,http://localhost:5173`). `*` is
+ignored on purpose. This protects browsers only; programs such as `curl` are
+not subject to CORS.
 
 ## Project Structure
 
@@ -189,11 +241,12 @@ which accepts any subset of these fields):
 
 | Setting | Default | Purpose |
 | ------- | ------- | ------- |
-| `download_folder` | `/downloads` | Where downloads are saved. |
-| `audio_download_folder` | unset | Separate folder for audio-only downloads (format "best audio"), e.g. a mounted music share. Unset or empty: audio goes to `download_folder` like everything else. Sending `""` clears it. The folder is created on first use. |
+| `download_folder` | `/downloads` | Where downloads are saved, and the folder the Files page manages. Checked, see [Security](#security). |
+| `audio_download_folder` | unset | Separate folder for audio-only downloads (format "best audio"), e.g. a mounted music share. Unset or empty: audio goes to `download_folder` like everything else. Sending `""` clears it. The folder is created on first use. Checked like `download_folder`. |
 | `audio_format` | `mp3` | Format audio-only downloads are converted to. |
 | `concurrent_downloads` | `2` | Parallel downloads, 1–10 (applies after a backend restart). |
-| `ytdlp_path` / `ffmpeg_path` | `yt-dlp` / `ffmpeg` | Binaries to use. |
+| `ytdlp_path` | `yt-dlp` | yt-dlp program: `yt-dlp`, or an absolute path to an executable whose name starts with `yt-dlp`. |
+| `ffmpeg_path` | `ffmpeg` | ffmpeg location, passed to yt-dlp as `--ffmpeg-location` when changed. |
 | `cookies_content` / `cookies_file_path` | unset | Cookie auth, see Features. |
 
 Network shares are stored in the same database. A database written by an older
@@ -204,7 +257,8 @@ Environment variables:
 
 | Variable | Where | Default | Purpose |
 | -------- | ----- | ------- | ------- |
-| `DATABASE_PATH` | backend | `./ytdlp_ui.db` | SQLite file; its directory also holds the managed `cookies.txt` |
+| `DATABASE_PATH` | backend | `./ytdlp_ui.db` | SQLite file; its directory is the app data directory and also holds the managed `cookies.txt`. Download folders may not overlap it. |
+| `CORS_ORIGINS` | backend | empty | Comma-separated web origins allowed to call the API from a browser. Empty: none (the bundled frontend does not need it). `*` is ignored. |
 | `YTDLP_AUTO_UPDATE` | backend container | `1` | Upgrade yt-dlp on container start; `0` pins the bundled version |
 | `BACKEND_URL` | frontend (build time) | `http://localhost:8000` | Target of the `/api/*` proxy |
 | `DOWNLOAD_DIR` | `docker compose` | `./downloads` | Host folder mounted at `/downloads` |
@@ -261,8 +315,14 @@ npm run dev                       # http://localhost:3000
 ```
 
 The frontend proxies `/api/*` to the backend (configured in `next.config.mjs`),
-so no CORS setup is needed. Override the target with `BACKEND_URL` if your
-backend runs elsewhere.
+so no CORS setup is needed and `CORS_ORIGINS` stays empty. Override the
+target with `BACKEND_URL` if your backend runs elsewhere.
+
+With the default `DATABASE_PATH` the app data directory is `backend/` itself,
+so a download folder inside the checkout's `backend/` folder, or one that
+contains it (your home folder, for example), is refused. Pick a separate
+folder such as `/home/<you>/Downloads/yt-dlp`, or move the database with
+`DATABASE_PATH`.
 
 Open **http://localhost:3000** and paste a URL.
 
@@ -459,7 +519,9 @@ than Docker on Linux.
 - Changing **concurrent downloads** takes effect after a backend restart (the
   worker pool is sized at startup).
 - This MVP has **no authentication** — run it behind a VPN, on a trusted LAN, or
-  add HTTP basic auth at the nginx layer before exposing it publicly.
+  add HTTP basic auth at the nginx layer before exposing it publicly. The
+  settings checks and the CORS default (see [Security](#security)) narrow what
+  a visitor can do but do not replace a login.
 - The **Files** page only browses the default download folder; files saved to
   a separate audio download folder are not listed there.
 - Job state lives in memory plus SQLite; in-flight jobs do not resume after a

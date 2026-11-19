@@ -76,19 +76,21 @@ def test_settings_stores_and_returns_the_audio_folder(client, backend, db):
     assert fetched.json()["download_folder"] == "/downloads"
 
 
-def test_settings_audio_folder_is_kept_when_other_fields_change(client):
-    client.post("/api/settings", json={"audio_download_folder": "/mnt/music"})
+def test_settings_audio_folder_is_kept_when_other_fields_change(client, backend):
+    folder = str(backend.tmp_path / "music")
+    client.post("/api/settings", json={"audio_download_folder": folder})
     client.post("/api/settings", json={"audio_format": "flac"})
 
-    assert client.get("/api/settings").json()["audio_download_folder"] == "/mnt/music"
+    assert client.get("/api/settings").json()["audio_download_folder"] == folder
 
 
-def test_settings_audio_folder_is_trimmed_and_empty_clears_it(client, db):
-    client.post("/api/settings", json={"audio_download_folder": "  /mnt/music  "})
-    assert client.get("/api/settings").json()["audio_download_folder"] == "/mnt/music"
+def test_settings_audio_folder_is_trimmed_and_empty_clears_it(client, backend, db):
+    folder = str(backend.tmp_path / "music")
+    client.post("/api/settings", json={"audio_download_folder": f"  {folder}  "})
+    assert client.get("/api/settings").json()["audio_download_folder"] == folder
 
     for blank in ("", "   "):
-        client.post("/api/settings", json={"audio_download_folder": "/mnt/music"})
+        client.post("/api/settings", json={"audio_download_folder": folder})
         cleared = client.post("/api/settings", json={"audio_download_folder": blank})
 
         assert cleared.status_code == 200
