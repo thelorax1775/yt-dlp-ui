@@ -38,6 +38,11 @@ FILEPATH_PRINT_TEMPLATE = "after_move:OUTPATH %(filepath)s"
 FILEPATH_RE = re.compile(r"^OUTPATH (.+)$")
 
 
+def _is_audio_only(job: "Job") -> bool:
+    """True when the job extracts audio rather than keeping the video."""
+    return job.format_id == "bestaudio"
+
+
 class Job:
     """In-memory representation of a download job."""
 
@@ -224,8 +229,15 @@ class DownloadManager:
             )
             await session.commit()
 
+    def _target_folder(self, job: Job, settings: SettingsModel) -> str:
+        """Audio-only jobs land in the audio folder when one is configured."""
+        if _is_audio_only(job) and settings.audio_download_folder:
+            return settings.audio_download_folder
+        return settings.download_folder
+
     def _build_args(self, job: Job, settings: SettingsModel) -> list[str]:
-        output_template = os.path.join(settings.download_folder, "%(title)s.%(ext)s")
+        folder = self._target_folder(job, settings)
+        output_template = os.path.join(folder, "%(title)s.%(ext)s")
         args = [
             settings.ytdlp_path,
             "--no-playlist",
@@ -257,6 +269,12 @@ class DownloadManager:
                 "-x",
                 "--audio-format",
                 settings.audio_format,
+                # Untagged audio shows up in a music library as "Unknown
+                # Artist", so write what YouTube knows into the file, and
+                # fall back to the uploader when it reports no artist.
+                "--embed-metadata",
+                "--parse-metadata",
+                "%(artist,uploader|)s:%(meta_artist)s",
             ]
         elif fmt and fmt != "bestvideo":
             args += ["-f", fmt]
@@ -293,7 +311,7 @@ class DownloadManager:
 
     async def _run_job(self, job: Job) -> None:
         settings = await self._get_settings()
-        os.makedirs(settings.download_folder, exist_ok=True)
+        os.makedirs(self._target_folder(job, settings), exist_ok=True)
 
         # fetch lightweight metadata for title/thumbnail (best effort)
         await self._enrich_metadata(job, settings)

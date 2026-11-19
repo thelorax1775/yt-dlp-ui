@@ -12,6 +12,7 @@ import pytest
 def make_settings(**overrides):
     values = dict(
         download_folder="/downloads",
+        audio_download_folder=None,
         audio_format="mp3",
         ytdlp_path="yt-dlp",
         ffmpeg_path="ffmpeg",

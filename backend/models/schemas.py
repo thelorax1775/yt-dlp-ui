@@ -72,6 +72,8 @@ class HistoryEntry(BaseModel):
 
 class SettingsResponse(BaseModel):
     download_folder: str
+    # empty = audio goes to download_folder like everything else
+    audio_download_folder: Optional[str] = None
     audio_format: str
     concurrent_downloads: int
     ytdlp_path: str
@@ -85,6 +87,8 @@ class SettingsResponse(BaseModel):
 
 class SettingsUpdate(BaseModel):
     download_folder: Optional[str] = None
+    # omitted = unchanged, "" = clear, non-empty = replace
+    audio_download_folder: Optional[str] = None
     audio_format: Optional[str] = None
     concurrent_downloads: Optional[int] = Field(None, ge=1, le=10)
     ytdlp_path: Optional[str] = None

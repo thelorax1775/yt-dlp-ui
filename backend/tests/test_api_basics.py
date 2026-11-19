@@ -30,6 +30,7 @@ def test_settings_defaults(client, backend):
     assert response.status_code == 200
     assert response.json() == {
         "download_folder": "/downloads",
+        "audio_download_folder": None,
         "audio_format": "mp3",
         "concurrent_downloads": 2,
         "ytdlp_path": "yt-dlp",

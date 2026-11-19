@@ -62,6 +62,7 @@ export interface HistoryEntry {
 
 export interface Settings {
   download_folder: string;
+  audio_download_folder?: string | null;
   audio_format: string;
   concurrent_downloads: number;
   ytdlp_path: string;
