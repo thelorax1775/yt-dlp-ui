@@ -89,13 +89,14 @@ def test_audio_folder_can_be_set_on_a_migrated_database(old_database, request, b
     old_database(SCHEMA_BEFORE_AUDIO_FOLDER)
     client = request.getfixturevalue("client")
 
-    posted = client.post("/api/settings", json={"audio_download_folder": "/mnt/music"})
+    folder = str(backend.tmp_path / "music")
+    posted = client.post("/api/settings", json={"audio_download_folder": folder})
 
     assert posted.status_code == 200, posted.text
-    assert client.get("/api/settings").json()["audio_download_folder"] == "/mnt/music"
+    assert client.get("/api/settings").json()["audio_download_folder"] == folder
     with sqlite3.connect(backend.db_path) as conn:
         assert conn.execute("SELECT audio_download_folder FROM settings").fetchall() == [
-            ("/mnt/music",)
+            (folder,)
         ]
 
 

@@ -26,6 +26,10 @@ import pytest
 
 APP_PACKAGES = ("main", "api", "models", "services")
 
+# The real function, kept for the one test that must prove a refused program
+# was never started (see ``real_program`` below).
+REAL_CREATE_SUBPROCESS_EXEC = asyncio.create_subprocess_exec
+
 
 def _purge_app_modules() -> None:
     for name in list(sys.modules):
@@ -118,15 +122,22 @@ def no_network(monkeypatch):
 
 
 @pytest.fixture
-def backend(tmp_path, monkeypatch):
+def backend(tmp_path, monkeypatch, request):
     """Freshly imported application modules bound to a temp database.
 
     The app is imported but not started; use ``client`` for HTTP tests.
+    ``@pytest.mark.cors_origins("https://a.example,...")`` sets CORS_ORIGINS
+    for the import; without the marker the variable is unset.
     """
     data_dir = tmp_path / "data"
     data_dir.mkdir()
     db_path = data_dir / "test.db"
     monkeypatch.setenv("DATABASE_PATH", str(db_path))
+    cors = request.node.get_closest_marker("cors_origins")
+    if cors:
+        monkeypatch.setenv("CORS_ORIGINS", cors.args[0])
+    else:
+        monkeypatch.delenv("CORS_ORIGINS", raising=False)
 
     fake = FakeSubprocess()
     monkeypatch.setattr(asyncio, "create_subprocess_exec", fake)
@@ -154,6 +165,30 @@ def backend(tmp_path, monkeypatch):
         creds_dir=creds_dir,
     )
     _purge_app_modules()
+
+
+@pytest.fixture
+def real_program(backend, monkeypatch):
+    """Let ONE program, a script the test wrote under tmp_path, really run.
+
+    Returns a function taking that script's path. Every other program still
+    goes to the fake. This is what makes "the script was never executed"
+    checkable: without the fix the script runs and leaves its marker file.
+    """
+
+    def allow(path) -> None:
+        path = str(path)
+        assert path.startswith(str(backend.tmp_path) + "/")
+
+        async def run(*args, **kwargs):
+            if str(args[0]) == path:
+                backend.subprocess.calls.append([str(a) for a in args])
+                return await REAL_CREATE_SUBPROCESS_EXEC(*args, **kwargs)
+            return await backend.subprocess(*args, **kwargs)
+
+        monkeypatch.setattr(asyncio, "create_subprocess_exec", run)
+
+    return allow
 
 
 @pytest.fixture

@@ -9,8 +9,14 @@ from services.cookies import (
     validate_cookies_content,
     write_cookies_file,
 )
+from services.settings_guard import SettingsError, validate_folder, validate_ytdlp_path
 
 router = APIRouter()
+
+_FOLDER_FIELDS = {
+    "download_folder": "Download folder",
+    "audio_download_folder": "Audio download folder",
+}
 
 # yt-dlp version per binary path, resolved once per process (the entrypoint
 # updates yt-dlp at container start, so it can't change mid-run).
@@ -68,6 +74,28 @@ async def update_settings(update: SettingsUpdate):
             session.add(row)
 
         data = update.model_dump(exclude_unset=True)
+
+        # Check the values that decide which files and programs the app
+        # touches before anything is stored or written. A value equal to the
+        # stored one is not a change and is left alone, so the settings page
+        # (which posts every field) keeps working on an older setup.
+        try:
+            for field, label in _FOLDER_FIELDS.items():
+                if data.get(field) is None:
+                    continue
+                value = data[field].strip()
+                if field == "audio_download_folder" and not value:
+                    continue  # "" clears it, handled below
+                if value != getattr(row, field):
+                    value = validate_folder(value, label)
+                data[field] = value
+            if data.get("ytdlp_path") is not None:
+                value = data["ytdlp_path"].strip()
+                if value != row.ytdlp_path:
+                    value = validate_ytdlp_path(value)
+                data["ytdlp_path"] = value
+        except SettingsError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
 
         # Cookie fields support "clear" via empty string, which the generic
         # not-None loop below cannot express.

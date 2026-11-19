@@ -209,3 +209,168 @@ def test_mkdir_rejects_parent_outside_root(client, tree):
 
     assert response.status_code == 400
     assert not (tree.parent / "outside" / "new").exists()
+
+
+# ---- a file in a subfolder: the whole round trip ----
+
+
+def test_file_in_a_subfolder_can_be_listed_downloaded_and_deleted(client, tree):
+    listed = client.get("/api/files", params={"path": "Music"})
+    downloaded = client.get("/api/files/download", params={"path": "Music/song.mp3"})
+    deleted = client.delete("/api/files", params={"path": "Music/song.mp3"})
+
+    assert listed.status_code == 200
+    assert [e["path"] for e in listed.json()["entries"]] == ["Music/song.mp3"]
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"audio"
+    assert deleted.status_code == 200
+    assert not (tree / "Music" / "song.mp3").exists()
+    assert (tree / "Music").is_dir()
+
+
+@pytest.mark.parametrize("path", ["../x", "../outside/secret.txt", "Music/../../outside"])
+def test_traversal_is_refused_by_every_file_operation(client, tree, path):
+    outside = tree.parent / "outside"
+
+    assert client.get("/api/files", params={"path": path}).status_code == 400
+    assert client.get("/api/files/download", params={"path": path}).status_code == 400
+    assert client.delete("/api/files", params={"path": path}).status_code == 400
+    assert (
+        client.post("/api/files/rename", json={"path": path, "new_name": "n"}).status_code == 400
+    )
+    assert client.post("/api/files/mkdir", json={"path": path, "name": "n"}).status_code == 400
+    assert (outside / "secret.txt").read_text() == "do not serve"
+    assert sorted(p.name for p in outside.iterdir()) == ["secret.txt"]
+
+
+def test_absolute_paths_never_reach_outside_the_root(client, tree):
+    outside = tree.parent / "outside"
+    secret = str(outside / "secret.txt")
+
+    assert client.get("/api/files", params={"path": str(outside)}).json().get("entries") in (
+        None,
+        [],
+    )
+    assert client.get("/api/files/download", params={"path": secret}).status_code in (400, 404)
+    assert client.delete("/api/files", params={"path": secret}).status_code in (400, 404)
+    assert (outside / "secret.txt").read_text() == "do not serve"
+
+
+# ---- root folder "/" (subfolders used to be refused: "//" prefix bug) ----
+
+
+def test_safe_join_accepts_subfolders_when_the_root_is_the_filesystem_root(backend, tmp_path):
+    (tmp_path / "sub").mkdir()
+    expected = os.path.realpath(tmp_path / "sub")
+
+    assert backend.files_manager._safe_join("/", expected) == expected
+    assert backend.files_manager._safe_join("/", "") == "/"
+
+
+def test_subfolder_listing_and_download_work_when_the_root_is_the_filesystem_root(
+    client, backend, tmp_path, monkeypatch
+):
+    # "/" can no longer be chosen in the settings, but an older setup may have
+    # it stored. Read-only requests, and only for a temp folder.
+    folder = tmp_path / "under-root"
+    folder.mkdir()
+    (folder / "clip.mp4").write_bytes(b"video-bytes")
+    rel = os.path.realpath(folder).lstrip("/")
+
+    async def filesystem_root():
+        return "/"
+
+    monkeypatch.setattr(backend.files_manager, "get_root", filesystem_root)
+
+    listed = client.get("/api/files", params={"path": rel})
+    downloaded = client.get("/api/files/download", params={"path": f"{rel}/clip.mp4"})
+
+    assert listed.status_code == 200, listed.text
+    assert [e["path"] for e in listed.json()["entries"]] == [f"{rel}/clip.mp4"]
+    assert downloaded.status_code == 200
+    assert downloaded.content == b"video-bytes"
+
+
+# ---- symbolic links: delete and rename act on the link, not its target ----
+
+
+def test_delete_of_a_link_removes_the_link_and_keeps_its_target(client, tree):
+    (tree / "keep.mp4").write_bytes(b"keep me")
+    (tree / "link.mp4").symlink_to(tree / "keep.mp4")
+
+    response = client.delete("/api/files", params={"path": "link.mp4"})
+
+    assert response.status_code == 200
+    assert (tree / "keep.mp4").read_bytes() == b"keep me"
+    assert not os.path.lexists(tree / "link.mp4")
+
+
+@pytest.mark.parametrize("path", ["album-link", "album-link/"])
+def test_delete_of_a_link_to_a_folder_keeps_the_folder(client, tree, path):
+    (tree / "album-link").symlink_to(tree / "Music")
+
+    response = client.delete("/api/files", params={"path": path})
+
+    assert response.status_code == 200
+    assert (tree / "Music" / "song.mp3").read_bytes() == b"audio"
+    assert not os.path.lexists(tree / "album-link")
+
+
+def test_link_pointing_outside_is_listed_in_place_and_can_be_removed(client, tree):
+    outside = tree.parent / "outside"
+    (tree / "escape.txt").symlink_to(outside / "secret.txt")
+    (tree / "escape-dir").symlink_to(outside)
+
+    entries = {e["name"]: e for e in client.get("/api/files").json()["entries"]}
+    # Listed where the link is, not where it leads.
+    assert entries["escape.txt"]["path"] == "escape.txt"
+    assert entries["escape-dir"]["path"] == "escape-dir"
+
+    # Following the link out of the root is still refused...
+    assert client.get("/api/files/download", params={"path": "escape.txt"}).status_code == 400
+    assert client.get("/api/files", params={"path": "escape-dir"}).status_code == 400
+    through = client.delete("/api/files", params={"path": "escape-dir/secret.txt"})
+    assert through.status_code == 400
+
+    # ...but the links themselves can be cleaned up, and the targets stay.
+    assert client.delete("/api/files", params={"path": "escape.txt"}).status_code == 200
+    assert client.delete("/api/files", params={"path": "escape-dir"}).status_code == 200
+    assert not os.path.lexists(tree / "escape.txt")
+    assert not os.path.lexists(tree / "escape-dir")
+    assert (outside / "secret.txt").read_text() == "do not serve"
+
+
+def test_rename_of_a_link_renames_the_link_and_keeps_its_target(client, tree):
+    (tree / "keep.mp4").write_bytes(b"keep me")
+    (tree / "link.mp4").symlink_to(tree / "keep.mp4")
+
+    response = client.post(
+        "/api/files/rename", json={"path": "link.mp4", "new_name": "renamed-link.mp4"}
+    )
+
+    assert response.status_code == 200, response.text
+    assert response.json()["path"] == "renamed-link.mp4"
+    assert (tree / "keep.mp4").read_bytes() == b"keep me"
+    assert (tree / "renamed-link.mp4").is_symlink()
+    assert not os.path.lexists(tree / "link.mp4")
+
+
+def test_rename_does_not_replace_an_existing_link(client, tree):
+    (tree / "dangling").symlink_to(tree / "gone.mp4")
+
+    response = client.post("/api/files/rename", json={"path": "clip.mp4", "new_name": "dangling"})
+
+    assert response.status_code == 400
+    assert (tree / "clip.mp4").exists()
+    assert (tree / "dangling").is_symlink()
+
+
+def test_link_whose_target_is_gone_is_listed_and_can_be_deleted(client, tree):
+    (tree / "dangling.mp4").symlink_to(tree / "gone.mp4")
+
+    names = [e["name"] for e in client.get("/api/files").json()["entries"]]
+    response = client.delete("/api/files", params={"path": "dangling.mp4"})
+
+    assert "dangling.mp4" in names
+    assert response.status_code == 200
+    assert not os.path.lexists(tree / "dangling.mp4")
