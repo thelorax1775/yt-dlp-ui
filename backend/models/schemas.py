@@ -163,6 +163,25 @@ class RenameRequest(BaseModel):
         return v
 
 
+class SearchResult(BaseModel):
+    id: str
+    title: str
+    url: str
+    uploader: Optional[str] = None
+    channel_url: Optional[str] = None
+    duration: Optional[int] = None
+    upload_date: Optional[str] = None  # YYYY-MM-DD when known
+    view_count: Optional[int] = None
+
+
+class SearchResponse(BaseModel):
+    mode: str  # "search" | "channel"
+    query: Optional[str] = None
+    channel: Optional[str] = None
+    resolved_channel: Optional[dict] = None
+    results: list[SearchResult] = []
+
+
 class MkdirRequest(BaseModel):
     path: str  # parent path relative to root
     name: str

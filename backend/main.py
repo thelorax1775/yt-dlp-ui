@@ -4,7 +4,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import downloads, files, history, info, settings, shares
+from api.routes import downloads, files, history, info, search, settings, shares
 from models.database import init_db, seed_settings
 from services.cookies import ensure_cookies_file
 from services.download_manager import manager
@@ -42,6 +42,7 @@ app.include_router(history.router, prefix="/api", tags=["history"])
 app.include_router(settings.router, prefix="/api", tags=["settings"])
 app.include_router(shares.router, prefix="/api", tags=["shares"])
 app.include_router(files.router, prefix="/api", tags=["files"])
+app.include_router(search.router, prefix="/api", tags=["search"])
 
 
 @app.get("/api/health")
