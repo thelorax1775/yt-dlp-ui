@@ -152,3 +152,173 @@ def test_share_api_rejects_unknown_type_and_unknown_id(client, backend):
     assert client.post("/api/shares/999/unmount").status_code == 404
     assert client.delete("/api/shares/999").status_code == 404
     assert backend.subprocess.calls == []
+
+
+# --- unsafe input -----------------------------------------------------------
+
+import pytest
+
+
+def _post(client, backend, **overrides):
+    body = {
+        "name": "Media",
+        "type": "nfs",
+        "remote": "nas.example.invalid:/export/media",
+        "mount_point": str(backend.tmp_path / "mnt" / "media"),
+    }
+    body.update(overrides)
+    return client.post("/api/shares", json=body)
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        {"remote": "--bind"},
+        {"remote": "-o:/x"},
+        {"remote": "host:/a b"},
+        {"remote": "host:/a\nb"},
+        {"remote": "nas.example.invalid"},
+        {"type": "smb", "remote": "host:/export"},
+        {"type": "smb", "remote": "//host"},
+        {"mount_point": "/app/data"},
+        {"mount_point": "../x"},
+        {"mount_point": "relative/dir"},
+        {"mount_point": "/etc"},
+        {"mount_point": "BASE/../../etc"},
+        {"mount_point": "BASE"},
+        {"mount_point": "DATA/inner"},
+        {"username": "a\npassword=x"},
+        {"username": "a,b"},
+        {"password": "p\0w"},
+        {"domain": "d\r\nx"},
+        {"options": "credentials=/etc/passwd"},
+        {"options": "ro,credentials=/etc/passwd"},
+        {"options": "uid=0,credentials=/etc/passwd"},
+        {"options": "suid"},
+        {"options": "dev"},
+        {"options": "exec"},
+        {"options": "bogus"},
+        {"options": "ro=1"},
+        {"options": "vers="},
+        {"options": "uid=0 -o x"},
+    ],
+)
+def test_unsafe_share_input_is_refused(client, backend, overrides):
+    overrides = dict(overrides)
+    mp = overrides.get("mount_point")
+    if mp:
+        overrides["mount_point"] = mp.replace("BASE", str(backend.tmp_path / "mnt")).replace(
+            "DATA", str(backend.data_dir)
+        )
+    response = _post(client, backend, **overrides)
+
+    assert response.status_code == 422, response.text
+    assert client.get("/api/shares").json() == []
+
+
+def test_mount_point_outside_the_base_is_refused(client, backend):
+    response = _post(client, backend, mount_point=str(backend.tmp_path / "elsewhere"))
+
+    assert response.status_code == 422
+
+
+def test_mount_point_may_not_be_a_download_folder(client, backend, downloads_dir):
+    (backend.tmp_path / "mnt").mkdir()
+    client.post("/api/settings", json={"download_folder": str(backend.tmp_path / "mnt" / "dl")})
+
+    response = _post(client, backend, mount_point=str(backend.tmp_path / "mnt" / "dl"))
+    inside = _post(client, backend, mount_point=str(backend.tmp_path / "mnt" / "dl" / "x"))
+
+    assert response.status_code == 422
+    assert inside.status_code == 422
+
+
+def test_allowed_options_are_accepted(client, backend):
+    response = _post(client, backend, options="ro,vers=4.1,nfsvers=4,soft,timeo=30,retrans=2")
+
+    assert response.status_code == 200
+
+
+def test_valid_nfs_and_smb_shares_produce_the_expected_argv(client, backend):
+    mnt = backend.tmp_path / "mnt"
+    nfs = _post(client, backend, options="ro,vers=4", mount_point=str(mnt / "n")).json()
+    smb = _post(
+        client, backend, name="S", type="smb", remote="//nas.example.invalid/media",
+        mount_point=str(mnt / "s"), username="alice", password="test-only-pass",
+        domain="WORKGROUP", options="vers=3.0,file_mode=0644",
+    ).json()
+
+    assert client.post(f"/api/shares/{nfs['id']}/mount").json()["mounted"] is True
+    assert client.post(f"/api/shares/{smb['id']}/mount").json()["mounted"] is True
+
+    nfs_call, smb_call = backend.subprocess.calls_to("mount")
+    assert nfs_call == [
+        "mount", "-t", "nfs", "nas.example.invalid:/export/media", str(mnt / "n"),
+        "-o", "ro,vers=4",
+    ]
+    creds = smb_call[-1].split(",")[2].split("=", 1)[1]
+    assert smb_call == [
+        "mount", "-t", "cifs", "//nas.example.invalid/media", str(mnt / "s"),
+        "-o", f"rw,iocharset=utf8,credentials={creds},vers=3.0,file_mode=0644",
+    ]
+
+
+@pytest.mark.parametrize("returncode", [0, 32])
+def test_no_credentials_file_is_left_behind(client, backend, returncode):
+    backend.subprocess.mount_returncode = returncode
+    share = _post(
+        client, backend, type="smb", remote="//nas.example.invalid/media",
+        username="alice", password="test-only-pass",
+    ).json()
+
+    client.post(f"/api/shares/{share['id']}/mount")
+
+    assert len(backend.subprocess.calls_to("mount")) == 1
+    assert "credentials=" in backend.subprocess.calls_to("mount")[0][-1]
+    assert not backend.creds_dir.exists() or list(backend.creds_dir.iterdir()) == []
+
+
+def _insert_share(backend, mount_point):
+    import sqlite3
+
+    with sqlite3.connect(backend.db_path) as conn:
+        conn.execute(
+            "INSERT INTO shares (name, type, remote, mount_point, auto_mount) "
+            "VALUES ('x', 'nfs', 'h:/x', ?, 0)",
+            (mount_point,),
+        )
+        return conn.execute("SELECT max(id) FROM shares").fetchone()[0]
+
+
+def test_unmount_and_delete_never_run_umount_outside_the_base(client, backend, monkeypatch):
+    # Pretend everything is mounted so only the validation can stop umount.
+    monkeypatch.setattr(backend.share_manager, "is_mounted", lambda _mp: True)
+    sid = _insert_share(backend, str(backend.data_dir))
+    sid2 = _insert_share(backend, "/etc")
+
+    unmounted = client.post(f"/api/shares/{sid}/unmount")
+    deleted = client.delete(f"/api/shares/{sid2}")
+
+    assert unmounted.status_code == 200
+    assert "Refusing" in unmounted.json()["message"]
+    assert deleted.status_code == 200
+    assert backend.subprocess.calls_to("umount") == []
+
+
+def test_unmount_still_works_for_a_share_inside_the_base(client, backend, monkeypatch):
+    monkeypatch.setattr(backend.share_manager, "is_mounted", lambda _mp: True)
+    mp = str(backend.tmp_path / "mnt" / "ok")
+    sid = _insert_share(backend, mp)
+
+    client.post(f"/api/shares/{sid}/unmount")
+
+    assert backend.subprocess.calls_to("umount") == [["umount", mp]]
+
+
+def test_mounting_a_stored_unsafe_share_is_refused(client, backend):
+    sid = _insert_share(backend, "/etc")
+
+    response = client.post(f"/api/shares/{sid}/mount")
+
+    assert response.json()["mounted"] is False
+    assert backend.subprocess.calls_to("mount") == []

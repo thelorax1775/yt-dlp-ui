@@ -1,6 +1,15 @@
 from datetime import datetime
 from typing import Optional
-from pydantic import BaseModel, Field, HttpUrl, field_validator
+from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
+
+from services import share_guard
+
+
+def _guard(fn, *args):
+    try:
+        return fn(*args)
+    except share_guard.ShareError as exc:
+        raise ValueError(str(exc)) from None
 
 
 class FormatInfo(BaseModel):
@@ -115,6 +124,36 @@ class ShareBase(BaseModel):
         if v not in ("smb", "nfs"):
             raise ValueError("type must be 'smb' or 'nfs'")
         return v
+
+    @field_validator("mount_point")
+    @classmethod
+    def validate_mount_point(cls, v: str) -> str:
+        return _guard(share_guard.validate_mount_point, v)
+
+    @field_validator("username")
+    @classmethod
+    def validate_username(cls, v):
+        return _guard(share_guard.validate_credential, "username", v)
+
+    @field_validator("password")
+    @classmethod
+    def validate_password(cls, v):
+        return _guard(share_guard.validate_credential, "password", v)
+
+    @field_validator("domain")
+    @classmethod
+    def validate_domain(cls, v):
+        return _guard(share_guard.validate_credential, "domain", v)
+
+    @field_validator("options")
+    @classmethod
+    def validate_options(cls, v):
+        return _guard(share_guard.validate_options, v)
+
+    @model_validator(mode="after")
+    def validate_remote(self):
+        _guard(share_guard.validate_remote, self.type, self.remote)
+        return self
 
 
 class ShareCreate(ShareBase):

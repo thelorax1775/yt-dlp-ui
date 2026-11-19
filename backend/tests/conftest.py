@@ -133,6 +133,7 @@ def backend(tmp_path, monkeypatch, request):
     data_dir.mkdir()
     db_path = data_dir / "test.db"
     monkeypatch.setenv("DATABASE_PATH", str(db_path))
+    monkeypatch.setenv("SHARES_BASE", str(tmp_path / "mnt"))
     cors = request.node.get_closest_marker("cors_origins")
     if cors:
         monkeypatch.setenv("CORS_ORIGINS", cors.args[0])

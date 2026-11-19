@@ -1,9 +1,9 @@
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
-from models.database import AsyncSessionLocal, ShareModel
+from models.database import AsyncSessionLocal, SettingsModel, ShareModel
 from models.schemas import MountResult, ShareCreate, ShareResponse
-from services import share_manager
+from services import share_guard, share_manager
 
 router = APIRouter()
 
@@ -33,6 +33,15 @@ async def list_shares():
 @router.post("/shares", response_model=ShareResponse)
 async def create_share(share: ShareCreate):
     async with AsyncSessionLocal() as session:
+        settings = await session.get(SettingsModel, 1)
+        folders = (
+            [settings.download_folder, settings.audio_download_folder]
+            if settings else ["/downloads"]
+        )
+        try:
+            share_guard.validate_mount_point(share.mount_point, folders=folders)
+        except share_guard.ShareError as exc:
+            raise HTTPException(status_code=422, detail=str(exc))
         row = ShareModel(
             name=share.name,
             type=share.type,
