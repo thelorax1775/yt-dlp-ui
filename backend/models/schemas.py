@@ -72,6 +72,8 @@ class HistoryEntry(BaseModel):
 
 class SettingsResponse(BaseModel):
     download_folder: str
+    # empty = audio goes to download_folder like everything else
+    audio_download_folder: Optional[str] = None
     audio_format: str
     concurrent_downloads: int
     ytdlp_path: str
@@ -85,6 +87,8 @@ class SettingsResponse(BaseModel):
 
 class SettingsUpdate(BaseModel):
     download_folder: Optional[str] = None
+    # omitted = unchanged, "" = clear, non-empty = replace
+    audio_download_folder: Optional[str] = None
     audio_format: Optional[str] = None
     concurrent_downloads: Optional[int] = Field(None, ge=1, le=10)
     ytdlp_path: Optional[str] = None
@@ -161,6 +165,25 @@ class RenameRequest(BaseModel):
         if not v or "/" in v or "\\" in v or v in (".", ".."):
             raise ValueError("Invalid file name")
         return v
+
+
+class SearchResult(BaseModel):
+    id: str
+    title: str
+    url: str
+    uploader: Optional[str] = None
+    channel_url: Optional[str] = None
+    duration: Optional[int] = None
+    upload_date: Optional[str] = None  # YYYY-MM-DD when known
+    view_count: Optional[int] = None
+
+
+class SearchResponse(BaseModel):
+    mode: str  # "search" | "channel"
+    query: Optional[str] = None
+    channel: Optional[str] = None
+    resolved_channel: Optional[dict] = None
+    results: list[SearchResult] = []
 
 
 class MkdirRequest(BaseModel):

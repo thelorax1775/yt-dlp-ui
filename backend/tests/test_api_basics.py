@@ -30,6 +30,7 @@ def test_settings_defaults(client, backend):
     assert response.status_code == 200
     assert response.json() == {
         "download_folder": "/downloads",
+        "audio_download_folder": None,
         "audio_format": "mp3",
         "concurrent_downloads": 2,
         "ytdlp_path": "yt-dlp",
@@ -59,6 +60,40 @@ def test_settings_round_trip(client, backend):
     # Fields that were not sent keep their values.
     assert fetched.json()["ytdlp_path"] == "yt-dlp"
     assert fetched.json()["ffmpeg_path"] == "ffmpeg"
+
+
+def test_settings_stores_and_returns_the_audio_folder(client, backend, db):
+    folder = str(backend.tmp_path / "music")
+
+    posted = client.post("/api/settings", json={"audio_download_folder": folder})
+    fetched = client.get("/api/settings")
+
+    assert posted.status_code == 200
+    assert posted.json()["audio_download_folder"] == folder
+    assert fetched.json()["audio_download_folder"] == folder
+    assert db("SELECT audio_download_folder FROM settings WHERE id = 1") == [(folder,)]
+    # The normal download folder is a separate setting and is left alone.
+    assert fetched.json()["download_folder"] == "/downloads"
+
+
+def test_settings_audio_folder_is_kept_when_other_fields_change(client):
+    client.post("/api/settings", json={"audio_download_folder": "/mnt/music"})
+    client.post("/api/settings", json={"audio_format": "flac"})
+
+    assert client.get("/api/settings").json()["audio_download_folder"] == "/mnt/music"
+
+
+def test_settings_audio_folder_is_trimmed_and_empty_clears_it(client, db):
+    client.post("/api/settings", json={"audio_download_folder": "  /mnt/music  "})
+    assert client.get("/api/settings").json()["audio_download_folder"] == "/mnt/music"
+
+    for blank in ("", "   "):
+        client.post("/api/settings", json={"audio_download_folder": "/mnt/music"})
+        cleared = client.post("/api/settings", json={"audio_download_folder": blank})
+
+        assert cleared.status_code == 200
+        assert cleared.json()["audio_download_folder"] is None
+        assert db("SELECT audio_download_folder FROM settings WHERE id = 1") == [(None,)]
 
 
 def test_settings_partial_update_keeps_other_fields(client):

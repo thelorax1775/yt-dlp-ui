@@ -12,6 +12,7 @@ import pytest
 def make_settings(**overrides):
     values = dict(
         download_folder="/downloads",
+        audio_download_folder=None,
         audio_format="mp3",
         ytdlp_path="yt-dlp",
         ffmpeg_path="ffmpeg",
@@ -98,6 +99,48 @@ def test_build_args_audio(backend):
     assert option_value(args, "-f") == "bestaudio/best"
     assert "-x" in args
     assert option_value(args, "--audio-format") == "opus"
+
+
+def test_build_args_audio_tags_the_file_and_falls_back_to_the_uploader(backend):
+    args = build_args(backend, "bestaudio")
+
+    assert "--embed-metadata" in args
+    assert option_value(args, "--parse-metadata") == "%(artist,uploader|)s:%(meta_artist)s"
+
+
+@pytest.mark.parametrize("format_id", [None, "bestvideo", "bestvideo[height<=720]+bestaudio/best"])
+def test_build_args_video_is_not_tagged_like_audio(backend, format_id):
+    args = build_args(backend, format_id, audio_download_folder="/mnt/music")
+
+    assert "--embed-metadata" not in args
+    assert "--parse-metadata" not in args
+    assert "-x" not in args
+
+
+def test_build_args_audio_goes_to_the_audio_folder(backend):
+    args = build_args(
+        backend, "bestaudio", download_folder="/mnt/media", audio_download_folder="/mnt/music"
+    )
+
+    assert option_value(args, "-o") == "/mnt/music/%(title)s.%(ext)s"
+
+
+@pytest.mark.parametrize("format_id", [None, "bestvideo", "bestvideo[height<=720]+bestaudio/best"])
+def test_build_args_video_stays_in_the_download_folder(backend, format_id):
+    args = build_args(
+        backend, format_id, download_folder="/mnt/media", audio_download_folder="/mnt/music"
+    )
+
+    assert option_value(args, "-o") == "/mnt/media/%(title)s.%(ext)s"
+
+
+@pytest.mark.parametrize("unset", [None, ""])
+def test_build_args_audio_uses_the_download_folder_when_no_audio_folder_is_set(backend, unset):
+    args = build_args(
+        backend, "bestaudio", download_folder="/mnt/media", audio_download_folder=unset
+    )
+
+    assert option_value(args, "-o") == "/mnt/media/%(title)s.%(ext)s"
 
 
 def test_build_args_explicit_format(backend):
@@ -207,3 +250,45 @@ def test_failed_download_reports_the_error_and_is_not_in_history(
     assert job["status"] == "failed"
     assert job["error"] == "ERROR: [generic] Unable to download webpage: HTTP Error 404: Not Found"
     assert client.get("/api/history").json() == []
+
+
+def test_audio_job_is_written_to_the_audio_folder_and_video_job_to_the_download_folder(
+    client, backend, downloads_dir, wait_for_download
+):
+    # Not created up front: the job has to create its own target folder.
+    audio_dir = backend.tmp_path / "music"
+    response = client.post("/api/settings", json={"audio_download_folder": str(audio_dir)})
+    assert response.status_code == 200, response.text
+
+    audio = client.post(
+        "/api/download",
+        json={"url": "https://example.invalid/watch?v=song", "format_id": "bestaudio"},
+    ).json()
+    wait_for_download(audio["id"])
+    video = client.post(
+        "/api/download",
+        json={"url": "https://example.invalid/watch?v=clip", "format_id": "bestvideo"},
+    ).json()
+    wait_for_download(video["id"])
+
+    by_url = {argv[-1]: argv for argv in backend.subprocess.download_calls()}
+    audio_out = option_value(by_url["https://example.invalid/watch?v=song"], "-o")
+    video_out = option_value(by_url["https://example.invalid/watch?v=clip"], "-o")
+
+    assert os.path.dirname(audio_out) == str(audio_dir)
+    assert os.path.dirname(video_out) == str(downloads_dir)
+    assert audio_dir.is_dir()
+    assert str(audio_dir) != str(downloads_dir)
+
+
+def test_audio_job_uses_the_download_folder_when_no_audio_folder_is_set(
+    client, backend, downloads_dir, wait_for_download
+):
+    audio = client.post(
+        "/api/download",
+        json={"url": "https://example.invalid/watch?v=song", "format_id": "bestaudio"},
+    ).json()
+    wait_for_download(audio["id"])
+
+    (argv,) = backend.subprocess.download_calls()
+    assert os.path.dirname(option_value(argv, "-o")) == str(downloads_dir)

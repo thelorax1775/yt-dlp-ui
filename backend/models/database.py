@@ -34,6 +34,9 @@ class SettingsModel(Base):
     # Optional explicit cookies file path (e.g. mounted into the container);
     # takes precedence over the managed file when set.
     cookies_file_path = Column(Text, nullable=True)
+    # Optional separate destination for audio-only jobs (e.g. a mounted music
+    # share). Falls back to download_folder when unset.
+    audio_download_folder = Column(Text, nullable=True)
 
 
 class JobModel(Base):
@@ -92,7 +95,7 @@ async def _migrate_settings_columns(conn) -> None:
     # settings columns introduced after the table was first created.
     result = await conn.exec_driver_sql("PRAGMA table_info(settings)")
     existing = {row[1] for row in result.fetchall()}
-    for column in ("cookies_content", "cookies_file_path"):
+    for column in ("cookies_content", "cookies_file_path", "audio_download_folder"):
         if column not in existing:
             await conn.exec_driver_sql(
                 f"ALTER TABLE settings ADD COLUMN {column} TEXT"

@@ -114,6 +114,19 @@ export function SettingsForm() {
             </p>
           </div>
 
+          <div className="grid gap-2 sm:col-span-2">
+            <Label>Audio download folder</Label>
+            <Input
+              value={settings.audio_download_folder ?? ""}
+              onChange={(e) => update("audio_download_folder", e.target.value)}
+              placeholder="/mnt/music"
+            />
+            <p className="text-xs text-muted-foreground">
+              Audio-only downloads go here instead. Leave empty to send
+              everything to the default folder.
+            </p>
+          </div>
+
           <div className="grid gap-2">
             <Label>Audio format</Label>
             <Select
