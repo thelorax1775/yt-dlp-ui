@@ -345,9 +345,16 @@ streams through immediately.
 ## Status
 
 Working MVP, in personal use and maintained as YouTube changes (latest fixes
-cover 403s and cookie-auth client selection). There are no automated tests or
-CI yet, and no license file. Windows/macOS native runs are documented but less
+cover 403s and cookie-auth client selection). Backend tests and
+CI run on every pull request; there is no license file yet. Windows/macOS native runs are documented but less
 exercised than Docker on Linux.
+
+### Development checks
+
+Run `./check.sh` from the repo root before opening a pull request. It runs the
+backend tests (pytest, with a fake yt-dlp, no network) and the frontend type
+check, lint and build. `./check.sh backend` and `./check.sh frontend` run one
+half. GitHub Actions runs the same script on every pull request.
 
 ## Notes & Limitations
 

@@ -32,3 +32,6 @@ Thumbs.db
 
 # Session cookies exported for yt-dlp
 cookies.txt
+
+# tsc incremental build info
+frontend/tsconfig.tsbuildinfo

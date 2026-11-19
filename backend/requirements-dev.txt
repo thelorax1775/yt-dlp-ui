@@ -1,0 +1,4 @@
+# Test-only dependencies. Install together with requirements.txt
+# (./check.sh backend does this for you).
+pytest>=8.3
+pytest-asyncio>=0.24
