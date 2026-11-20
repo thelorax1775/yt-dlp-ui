@@ -14,8 +14,7 @@ from datetime import datetime, timezone
 import pytest
 
 
-@pytest.mark.asyncio
-async def test_history_finished_at_has_utc_offset(client, backend, downloads_dir, wait_for_download):
+def test_history_finished_at_has_utc_offset(client, backend, downloads_dir, wait_for_download):
     """After a finished download, GET /api/history returns finished_at ending in +00:00 or Z."""
     final_path = str(downloads_dir / "Fake Title.mp4")
     backend.subprocess.download_lines = [
@@ -46,8 +45,7 @@ async def test_history_finished_at_has_utc_offset(client, backend, downloads_dir
     assert abs((parsed - now_utc).total_seconds()) < 60
 
 
-@pytest.mark.asyncio
-async def test_jobs_created_updated_at_have_utc_offset(client, backend, downloads_dir, wait_for_download):
+def test_jobs_created_updated_at_have_utc_offset(client, backend, downloads_dir, wait_for_download):
     """GET /api/jobs returns created_at and updated_at with +00:00 or Z."""
     final_path = str(downloads_dir / "Fake Title.mp4")
     backend.subprocess.download_lines = [
@@ -76,8 +74,7 @@ async def test_jobs_created_updated_at_have_utc_offset(client, backend, download
         assert parsed.tzinfo == timezone.utc
 
 
-@pytest.mark.asyncio
-async def test_files_modified_is_utc_from_mtime(client, backend, downloads_dir):
+def test_files_modified_is_utc_from_mtime(client, backend, downloads_dir):
     """GET /api/files lists a file whose mtime was set with os.utime to 1700000000;
     its `modified` parses to exactly datetime.fromtimestamp(1700000000, tz=timezone.utc)."""
     # Create a test file and set its mtime to a known epoch
@@ -105,8 +102,7 @@ async def test_files_modified_is_utc_from_mtime(client, backend, downloads_dir):
     assert parsed == expected, f"expected {expected.isoformat()}, got {parsed.isoformat()}"
 
 
-@pytest.mark.asyncio
-async def test_naive_utc_from_db_is_serialized_as_utc(client, backend, downloads_dir):
+def test_naive_utc_from_db_is_serialized_as_utc(client, backend, downloads_dir):
     """A naive datetime in the DB (as the models store) is serialized with UTC offset."""
     # We can't easily inject a naive datetime into the DB without going through
     # the app, but we can check that the JobResponse/HistoryEntry models
