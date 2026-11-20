@@ -91,8 +91,8 @@ unchanged, so an older setup keeps working until that value is edited.
 What these checks do **not** cover: `ffmpeg_path` and `cookies_file_path` are
 passed to yt-dlp as given; a visitor can still point downloads at any other
 folder the backend may write to; and someone able to place an executable
-named `yt-dlp…` on the machine can have it run. Network shares are a separate
-topic.
+named `yt-dlp…` on the machine can have it run. Network share input is checked separately, see
+[Network Shares](#network-shares-nfs--smb).
 
 **Cross-site requests (CORS).** By default the backend sends no CORS headers,
 so a web page from another site cannot read any API response, and cannot send
@@ -229,7 +229,20 @@ it on backend startup.
 >   appropriate sudoers rule) and install `cifs-utils` / `nfs-common`.
 >
 > Mounts happen via `mount`/`umount` with an explicit argument list (never a
-> shell), so share names and credentials can't inject commands.
+> shell), and every field is checked first (a bad value is refused with `422`,
+> never escaped), because the API has no login:
+
+| Field | Allowed |
+| ----- | ------- |
+| `remote` | NFS `host:/path`, SMB `//host/share`. Must not start with `-`; no whitespace or control characters. |
+| `mount_point` | Absolute, no `..`, a folder **inside** `SHARES_BASE` (not the base itself). Never the app data directory or a download folder, or anything containing/inside them. |
+| `username`, `password`, `domain` | No newline, comma or NUL. |
+| `options` | Comma separated list of `ro`, `rw`, `soft`, `hard`, `noserverino`, `vers=`, `nfsvers=`, `timeo=`, `retrans=`, `iocharset=`, `file_mode=`, `dir_mode=`, `uid=`, `gid=`. Values use letters, digits, `.`, `_`, `-`. Anything else (`credentials`, `suid`, `dev`, `exec`, ...) is refused. |
+
+`SHARES_BASE` is an environment variable of the backend, default `/mnt`.
+Shares saved earlier are checked again on mount and unmount; one that no longer
+passes is not mounted, and `umount` is never run on a path that fails the
+check. The SMB credentials file is deleted as soon as `mount` returns.
 
 ---
 
@@ -257,6 +270,7 @@ Environment variables:
 
 | Variable | Where | Default | Purpose |
 | -------- | ----- | ------- | ------- |
+| `SHARES_BASE` | backend | `/mnt` | Folder all share mount points must be inside, see [Network Shares](#network-shares-nfs--smb). |
 | `DATABASE_PATH` | backend | `./ytdlp_ui.db` | SQLite file; its directory is the app data directory and also holds the managed `cookies.txt`. Download folders may not overlap it. |
 | `CORS_ORIGINS` | backend | empty | Comma-separated web origins allowed to call the API from a browser. Empty: none (the bundled frontend does not need it). `*` is ignored. |
 | `YTDLP_AUTO_UPDATE` | backend container | `1` | Upgrade yt-dlp on container start; `0` pins the bundled version |

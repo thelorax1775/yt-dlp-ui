@@ -14,6 +14,7 @@ import stat
 import tempfile
 
 from models.database import ShareModel
+from services import share_guard
 
 logger = logging.getLogger(__name__)
 
@@ -62,7 +63,18 @@ def _write_credentials(share: ShareModel) -> str:
     return path
 
 
+def _check_share(share: ShareModel) -> None:
+    """Re-validate a stored share; rows saved by older versions may be unsafe."""
+    share_guard.validate_remote(share.type, share.remote)
+    share_guard.validate_mount_point(share.mount_point)
+    share_guard.validate_credential("username", share.username)
+    share_guard.validate_credential("password", share.password)
+    share_guard.validate_credential("domain", share.domain)
+    share_guard.validate_options(share.options)
+
+
 def _build_mount_args(share: ShareModel) -> list[str]:
+    _check_share(share)
     os.makedirs(share.mount_point, exist_ok=True)
     extra = (share.options or "").strip()
 
@@ -93,8 +105,22 @@ def _build_mount_args(share: ShareModel) -> list[str]:
 async def mount_share(share: ShareModel) -> tuple[bool, str]:
     if is_mounted(share.mount_point):
         return True, "Already mounted"
-    args = _build_mount_args(share)
-    code, output = await _run(args)
+    creds = None
+    try:
+        try:
+            args = _build_mount_args(share)
+        except share_guard.ShareError as exc:
+            return False, f"Refusing to mount: {exc}"
+        for opt in args[-1].split(","):
+            if opt.startswith("credentials="):
+                creds = opt.split("=", 1)[1]
+        code, output = await _run(args)
+    finally:
+        if creds:
+            try:
+                os.remove(creds)
+            except FileNotFoundError:
+                pass
     if code == 0:
         return True, "Mounted"
     logger.warning("mount failed for share %s: %s", share.id, output)
@@ -102,6 +128,13 @@ async def mount_share(share: ShareModel) -> tuple[bool, str]:
 
 
 async def unmount_share(mount_point: str) -> tuple[bool, str]:
+    # Only ever umount a validated share mount point, never an arbitrary path
+    # that happens to be stored in a row.
+    try:
+        share_guard.validate_mount_point(mount_point)
+    except share_guard.ShareError as exc:
+        logger.warning("refusing to umount %r: %s", mount_point, exc)
+        return False, f"Refusing to unmount: {exc}"
     if not is_mounted(mount_point):
         return True, "Not mounted"
     code, output = await _run(["umount", mount_point])
