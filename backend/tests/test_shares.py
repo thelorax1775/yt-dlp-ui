@@ -322,3 +322,47 @@ def test_mounting_a_stored_unsafe_share_is_refused(client, backend):
 
     assert response.json()["mounted"] is False
     assert backend.subprocess.calls_to("mount") == []
+
+
+# --- mount point guards that the base rule alone would not catch -------------
+
+
+def test_mount_point_may_not_overlap_the_data_dir_inside_the_base(client, backend, monkeypatch):
+    # Base is the folder holding the data dir, so only the data-dir rule applies.
+    monkeypatch.setenv("SHARES_BASE", str(backend.tmp_path))
+    (backend.data_dir / "x").mkdir()
+    (backend.tmp_path / "up" / "data2").mkdir(parents=True)
+
+    for mp in (backend.data_dir, backend.data_dir / "x"):
+        assert _post(client, backend, mount_point=str(mp)).status_code == 422, mp
+
+    # A folder above the data dir (still below the base) contains it.
+    monkeypatch.setenv("SHARES_BASE", str(backend.tmp_path.parent))
+    assert _post(client, backend, mount_point=str(backend.tmp_path)).status_code == 422
+
+    # A sibling of the data dir is fine.
+    monkeypatch.setenv("SHARES_BASE", str(backend.tmp_path))
+    assert _post(client, backend, mount_point=str(backend.tmp_path / "up")).status_code == 200
+    assert client.get("/api/shares").json()[0]["mount_point"] == str(backend.tmp_path / "up")
+
+
+def test_mount_point_may_not_escape_the_base_through_a_symlink(client, backend):
+    base = backend.tmp_path / "mnt"
+    base.mkdir()
+    outside = backend.tmp_path / "outside"
+    outside.mkdir()
+    (base / "link").symlink_to(outside)
+
+    assert _post(client, backend, mount_point=str(base / "link")).status_code == 422
+    assert _post(client, backend, mount_point=str(base / "link" / "sub")).status_code == 422
+    assert client.get("/api/shares").json() == []
+    assert not (outside / "sub").exists()
+
+
+def test_mount_point_may_not_contain_a_download_folder(client, backend):
+    base = backend.tmp_path / "mnt"
+    (base / "a").mkdir(parents=True)
+    client.post("/api/settings", json={"download_folder": str(base / "a" / "dl")})
+
+    assert _post(client, backend, mount_point=str(base / "a")).status_code == 422
+    assert _post(client, backend, mount_point=str(base / "b")).status_code == 200
