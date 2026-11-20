@@ -181,5 +181,5 @@ def test_history_lists_newest_first(client, db):
         "thumbnail": None,
         "file_path": "/downloads/x.mp4",
         "format_id": "bestvideo",
-        "finished_at": "2026-03-01T10:00:00",
+        "finished_at": "2026-03-01T10:00:00Z",
     }

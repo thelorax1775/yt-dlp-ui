@@ -1,6 +1,6 @@
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Annotated, Optional
-from pydantic import BaseModel, BeforeValidator, Field, HttpUrl, field_validator, model_validator
+from pydantic import AfterValidator, BaseModel, BeforeValidator, Field, HttpUrl, field_validator, model_validator
 
 from services import share_guard
 
@@ -11,6 +11,23 @@ def _whole(v):
 
 
 WholeNumber = Annotated[int, BeforeValidator(_whole)]
+
+
+def _as_utc(v):
+    """Ensure a datetime is timezone-aware in UTC.
+    
+    - None is returned unchanged.
+    - Naive datetime is treated as UTC (tzinfo replaced with UTC).
+    - Aware datetime is converted to UTC.
+    """
+    if v is None:
+        return v
+    if v.tzinfo is None:
+        return v.replace(tzinfo=timezone.utc)
+    return v.astimezone(timezone.utc)
+
+
+UtcDatetime = Annotated[datetime, AfterValidator(_as_utc)]
 
 
 def _guard(fn, *args):
@@ -73,8 +90,8 @@ class JobResponse(BaseModel):
     eta: Optional[str] = None
     file_path: Optional[str] = None
     error: Optional[str] = None
-    created_at: Optional[datetime] = None
-    updated_at: Optional[datetime] = None
+    created_at: Optional[UtcDatetime] = None
+    updated_at: Optional[UtcDatetime] = None
 
 
 class HistoryEntry(BaseModel):
@@ -84,7 +101,7 @@ class HistoryEntry(BaseModel):
     thumbnail: Optional[str] = None
     file_path: Optional[str] = None
     format_id: Optional[str] = None
-    finished_at: Optional[datetime] = None
+    finished_at: Optional[UtcDatetime] = None
 
 
 class SettingsResponse(BaseModel):
@@ -192,7 +209,7 @@ class FileEntry(BaseModel):
     path: str  # path relative to the download root
     is_dir: bool
     size: Optional[int] = None
-    modified: Optional[datetime] = None
+    modified: Optional[UtcDatetime] = None
 
 
 class FileListResponse(BaseModel):
