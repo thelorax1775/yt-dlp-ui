@@ -7,10 +7,10 @@ import pytest
 
 def test_search_times_out_and_kills_process(client, backend, monkeypatch, real_program, tmp_path):
     """Search with a too-long yt-dlp returns 400 and the process is reaped."""
-    import services.metadata as metadata
+    from services import metadata
 
     # Lower the timeout to 1 second for the test
-    metadata.LOOKUP_TIMEOUT_SECONDS = 1
+    monkeypatch.setattr(metadata, "LOOKUP_TIMEOUT_SECONDS", 1)
 
     # Create a fake yt-dlp that writes its PID and sleeps for 30 seconds
     fake_ytdlp = tmp_path / "yt-dlp-slow"
@@ -19,7 +19,7 @@ def test_search_times_out_and_kills_process(client, backend, monkeypatch, real_p
         f"""#!/bin/sh
 echo $$ > {pid_file}
 sleep 30
-echo '{{\"entries\":[]}}'
+echo '{{"entries":[]}}'
 """
     )
     fake_ytdlp.chmod(0o755)
