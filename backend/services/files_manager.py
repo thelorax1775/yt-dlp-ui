@@ -13,7 +13,7 @@ be inside the root.
 import os
 import shutil
 import stat as stat_module
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 
 from models.database import AsyncSessionLocal, SettingsModel
@@ -71,7 +71,7 @@ def _entry(root: str, full: str) -> FileEntry:
         path=_rel_path(root, full),
         is_dir=is_dir,
         size=None if is_dir else info.st_size,
-        modified=datetime.fromtimestamp(info.st_mtime),
+        modified=datetime.fromtimestamp(info.st_mtime, tz=timezone.utc),
     )
 
 
