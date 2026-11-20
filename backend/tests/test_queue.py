@@ -191,6 +191,13 @@ def test_lookup_timeout_fails_the_job_and_frees_the_worker(
     from services import metadata
 
     monkeypatch.setattr(metadata, "LOOKUP_TIMEOUT_SECONDS", 1)
+    # One worker only (it is read at start), so the second job can only run if
+    # the timed-out lookup released that worker.
+    assert client.post("/api/settings", json={"concurrent_downloads": 1}).status_code == 200
+    client.portal.call(backend.download_manager.manager.stop)
+    client.portal.call(backend.download_manager.manager.start)
+    assert len(backend.download_manager.manager._workers) == 1
+
     job_id = client.post("/api/download", json={"url": URL + "hang"}).json()["id"]
     wait_until(lambda: hanging_ytdlp.exists() and hanging_ytdlp.read_text().strip())
     pid = int(hanging_ytdlp.read_text())
@@ -200,7 +207,7 @@ def test_lookup_timeout_fails_the_job_and_frees_the_worker(
     assert "timed out" in job["error"]
     assert not alive(pid)
 
-    # The worker is free again: a second job is picked up (and times out too).
+    # The only worker is free again: a second job is picked up (and times out too).
     second = client.post("/api/download", json={"url": URL + "again"}).json()["id"]
     assert wait_for_job(second, timeout=6)["status"] == "failed"
 

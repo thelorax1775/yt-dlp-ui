@@ -98,6 +98,7 @@ class DownloadManager:
         self._cancel_events: dict[str, asyncio.Event] = {}
         self._processes: dict[str, asyncio.subprocess.Process] = {}
         self._workers: list[asyncio.Task] = []
+        self._persist_tasks: set[asyncio.Task] = set()
         self._running = False
 
     # ---------- lifecycle ----------
@@ -117,9 +118,15 @@ class DownloadManager:
                 proc.terminate()
             except ProcessLookupError:
                 pass
-        for w in self._workers:
-            w.cancel()
+        workers = list(self._workers)
         self._workers.clear()
+        for w in workers:
+            w.cancel()
+        await asyncio.gather(*workers, return_exceptions=True)
+        # Database writes started by a cancelled worker finish before we return,
+        # so no connection is left half-closed.
+        if self._persist_tasks:
+            await asyncio.gather(*list(self._persist_tasks), return_exceptions=True)
 
     async def _load_jobs(self) -> None:
         """Read the jobs table back. Nothing is restarted automatically.
@@ -241,6 +248,13 @@ class DownloadManager:
             await q.put(payload)
 
     async def _persist_job(self, job: Job) -> None:
+        """Write the job row; cancelling the caller cannot cut the write off."""
+        task = asyncio.ensure_future(self._persist_job_now(job))
+        self._persist_tasks.add(task)
+        task.add_done_callback(self._persist_tasks.discard)
+        await asyncio.shield(task)
+
+    async def _persist_job_now(self, job: Job) -> None:
         async with AsyncSessionLocal() as session:
             row = await session.get(JobModel, job.id)
             if row is None:
@@ -433,7 +447,8 @@ class DownloadManager:
                 last_dest = dest.group(1).strip()
 
         returncode = await proc.wait()
-        self._processes.pop(job.id, None)
+        if self._processes.get(job.id) is proc:
+            del self._processes[job.id]
 
         if attempt != job.attempt:
             return
@@ -480,7 +495,10 @@ class DownloadManager:
             job.url,
         ]
 
+        current: dict = {}
+
         def remember(proc) -> None:
+            current["proc"] = proc
             self._processes[job.id] = proc
 
         try:
@@ -494,7 +512,8 @@ class DownloadManager:
         except Exception:  # noqa: BLE001
             logger.debug("metadata enrichment failed for %s", job.id)
         finally:
-            self._processes.pop(job.id, None)
+            if self._processes.get(job.id) is current.get("proc"):
+                self._processes.pop(job.id, None)
 
 
 # global singleton
