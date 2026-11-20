@@ -8,6 +8,8 @@ import type {
   MountResult,
   Settings,
   SettingsUpdate,
+  UpdateCheck,
+  UpdateJob,
   Share,
   ShareCreate,
 } from "./types";
@@ -28,6 +30,19 @@ async function handle<T>(resPromise: Promise<Response>): Promise<T> {
 }
 
 export const api = {
+  checkUpdate: () => handle<UpdateCheck>(fetch("/api/update/check")),
+
+  getUpdateStatus: () =>
+    handle<{ job: UpdateJob | null }>(fetch("/api/update/status")),
+
+  startUpdate: (adminToken: string) =>
+    handle<{ job: UpdateJob }>(
+      fetch("/api/update", {
+        method: "POST",
+        headers: { "X-Admin-Token": adminToken },
+      })
+    ),
+
   fetchMetadata: (url: string) =>
     handle<Metadata>(fetch(`/api/info?url=${encodeURIComponent(url)}`)),
 

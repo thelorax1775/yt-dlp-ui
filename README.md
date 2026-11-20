@@ -148,6 +148,9 @@ nginx.conf         # example reverse proxy
 | DELETE | `/api/shares/{id}`       | Remove a share (unmounts first)   |
 | POST   | `/api/shares/{id}/mount` | Mount a share                     |
 | POST   | `/api/shares/{id}/unmount` | Unmount a share                 |
+| GET    | `/api/update/check`      | Installed vs newest GitHub version |
+| GET    | `/api/update/status`     | Last update job and its log        |
+| POST   | `/api/update`            | Start the update (needs `X-Admin-Token`) |
 | GET    | `/api/files?path=`       | List a folder in the download dir |
 | DELETE | `/api/files?path=`       | Delete a file or folder           |
 | POST   | `/api/files/rename`      | Rename a file or folder           |
@@ -274,6 +277,7 @@ Environment variables:
 | `DATABASE_PATH` | backend | `./ytdlp_ui.db` | SQLite file; its directory is the app data directory and also holds the managed `cookies.txt`. Download folders may not overlap it. |
 | `CORS_ORIGINS` | backend | empty | Comma-separated web origins allowed to call the API from a browser. Empty: none (the bundled frontend does not need it). `*` is ignored. |
 | `YTDLP_AUTO_UPDATE` | backend container | `1` | Upgrade yt-dlp on container start; `0` pins the bundled version |
+| `UPDATE_*`, `GITHUB_TOKEN`, `APP_VERSION` | backend | unset | In-app updater, see [Updating](#updating). |
 | `BACKEND_URL` | frontend (build time) | `http://localhost:8000` | Target of the `/api/*` proxy |
 | `DOWNLOAD_DIR` | `docker compose` | `./downloads` | Host folder mounted at `/downloads` |
 
@@ -378,6 +382,52 @@ and that `/_next/image` answers 404 without the server opening any outbound
 connection. CI also builds the frontend Docker image (`frontend-image` job)
 and checks that it runs on Node 22 as the unprivileged `node` user.
 
+## Updating
+
+**Settings → Updates** shows the installed version (the commit it was built
+from), the newest version on GitHub (the latest release, or the head of the
+default branch when the repository has no releases), and an **Update** button.
+The button is disabled when you are up to date, when GitHub cannot be reached,
+or when updating is not enabled on the install. **Update** asks for the admin
+token, then runs as a background job; the card polls its log and the app
+restarts when the new version is ready.
+
+How it works, in order: `git fetch`; refuse if tracked files have local
+changes; check out the exact commit GitHub reported (nothing from the request
+chooses the version); build (`docker compose build`, or `pip install` + `npm ci`
++ `npm run build`); only then restart. If any step fails, the checkout goes back
+to the old commit and the old version keeps running. The database, `data/`,
+downloads and settings are never touched.
+
+Enable it with environment variables on the backend:
+
+| Variable | Purpose |
+| -------- | ------- |
+| `UPDATE_ADMIN_TOKEN` | Required. Long random secret; sent by the UI as `X-Admin-Token` and compared in constant time. Unset: the button is disabled and `POST /api/update` answers `403`. The custom header also means another website cannot trigger it (its preflight gets no CORS permission). |
+| `UPDATE_MODE` | `docker` or `systemd`, matching how you deploy. Unset: check only. |
+| `UPDATE_APP_DIR` | The git checkout to update (default: the repository this backend runs from). |
+| `GITHUB_TOKEN` | Optional, for a private repository (read access to contents). Read from the environment only; never shown in the UI, never logged, never passed to the update commands. Without it a private repository shows "Cannot reach GitHub". |
+| `APP_VERSION` | Commit baked into the image (compose passes it as a build argument). Without it the version is read from the checkout. |
+
+- **Docker:** start with the opt-in override
+  `UPDATE_ADMIN_TOKEN=... APP_DIR=$PWD docker compose -f docker-compose.yml -f docker-compose.update.yml up -d --build`.
+  It mounts the Docker socket (root-equivalent on the host: trusted networks
+  only) and the checkout at the same path. The restart runs in a short-lived
+  helper container (`docker:27-cli`) so it survives the backend being replaced.
+- **systemd:** set `UPDATE_MODE=systemd` and the variables above in
+  `ytdlp-backend.service`, and allow the service user to run
+  `systemctl restart ytdlp-backend ytdlp-frontend` (a sudoers rule or polkit
+  rule; the units are named as in [Deployment](#option-b--bare-metal-systemd--nginx)).
+  Run the update commands as the user that owns the checkout.
+
+**Manual fallback** (always works): `git pull`, then
+`docker compose up -d --build` (Docker), or
+`cd backend && ./venv/bin/pip install -r requirements.txt`,
+`cd ../frontend && npm ci && npm run build`, and
+`sudo systemctl restart ytdlp-backend ytdlp-frontend` (systemd). To go back,
+`git checkout <old commit>` and repeat. This is separate from the yt-dlp
+upgrade the backend does on start.
+
 ## Platform Support
 
 The app runs on **Linux, macOS, and Windows**. Linux is the primary, fully
@@ -448,7 +498,7 @@ The backend container upgrades yt-dlp automatically on every start, so a plain
 `YTDLP_AUTO_UPDATE=0` in `docker-compose.yml` to pin the bundled version
 instead. The installed version is shown in **Settings → Tool paths**.
 
-**Updating the app itself:** `git pull`, then `docker compose up -d --build`.
+**Updating the app itself:** use the Update card in **Settings** ([Updating](#updating)), or `git pull` then `docker compose up -d --build`.
 
 Put nginx (or any reverse proxy) in front of port 3000 for TLS — see below.
 

@@ -1,5 +1,6 @@
 import { PageHeader } from "@/components/PageHeader";
 import { SettingsForm } from "@/components/SettingsForm";
+import { UpdateCard } from "@/components/UpdateCard";
 import { SharesManager } from "@/components/SharesManager";
 
 export default function SettingsPage() {
@@ -12,6 +13,7 @@ export default function SettingsPage() {
       <div className="flex flex-col gap-6">
         <SettingsForm />
         <SharesManager />
+        <UpdateCard />
       </div>
     </div>
   );

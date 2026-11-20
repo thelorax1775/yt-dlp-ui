@@ -127,3 +127,28 @@ export interface FileListResponse {
   path: string;
   entries: FileEntry[];
 }
+
+export interface UpdateLatest {
+  kind: "release" | "branch";
+  label: string;
+  sha: string;
+}
+
+export interface UpdateCheck {
+  installed: string;
+  latest: UpdateLatest | null;
+  state: "up_to_date" | "update_available" | "ahead" | "unknown" | "unreachable" | "error";
+  message: string;
+  mode: "docker" | "systemd" | null;
+  token_configured: boolean;
+  update_enabled: boolean;
+  update_available: boolean;
+}
+
+export interface UpdateJob {
+  status: "running" | "restarting" | "succeeded" | "failed";
+  target: string;
+  from: string;
+  error: string | null;
+  log: string[];
+}
