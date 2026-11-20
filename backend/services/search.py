@@ -78,16 +78,14 @@ def iso_date(s: Optional[str]) -> Optional[str]:
 
 
 async def run_ytdlp_json(args: list[str]) -> dict:
-    from services.metadata import extract_error  # lazy: metadata imports the DB layer
+    from services.metadata import extract_error, run_lookup, LookupTimeout  # lazy: metadata imports the DB layer
 
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
+    try:
+        returncode, stdout, stderr = await run_lookup(args)
+    except LookupTimeout as exc:
+        raise ValueError(f"yt-dlp failed: {exc}")
 
-    if proc.returncode != 0:
+    if returncode != 0:
         err = extract_error(stderr.decode(errors="replace"))
         raise ValueError(f"yt-dlp failed: {err}")
 

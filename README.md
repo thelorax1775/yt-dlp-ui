@@ -206,6 +206,7 @@ URL, and `resolved_channel` (`name`, `url`) is set when `latest_from_channel`
 picked it. Each result is completed with one extra yt-dlp metadata call (the
 listing itself carries no upload date), run one at a time, so a search takes a
 few seconds per result. Fields yt-dlp does not report are `null`.
+Search lookups use the same time limit as `/api/info`.
 
 ---
 
@@ -295,40 +296,20 @@ and share credentials. `data/` and `*.db` are already gitignored.
 - `yt-dlp` and `ffmpeg` available on your `PATH`
   (or set their absolute paths in **Settings**)
 
-Install `yt-dlp` + `ffmpeg` for your OS:
-
-```bash
-# Debian/Ubuntu
-sudo apt install ffmpeg
-sudo curl -L https://github.com/yt-dlp/yt-dlp/releases/latest/download/yt-dlp -o /usr/local/bin/yt-dlp
-sudo chmod a+rx /usr/local/bin/yt-dlp
-
-# macOS (Homebrew)
-brew install yt-dlp ffmpeg
-
-# Windows (winget) — or download the .exe files and add them to PATH
-winget install yt-dlp.yt-dlp
-winget install Gyan.FFmpeg
-```
-
-### 1. Backend
+### Run the backend
 
 ```bash
 cd backend
-python -m venv venv
-source venv/bin/activate          # Windows: venv\Scripts\activate
+python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-uvicorn main:app --reload --port 8000
+uvicorn main:app --reload   # http://localhost:8000
 ```
 
-The API is now at `http://localhost:8000` (docs at `/docs`). On first run it
-creates `ytdlp_ui.db` and seeds default settings.
-
-### 2. Frontend
+### Run the frontend
 
 ```bash
 cd frontend
-npm install
+npm ci
 npm run dev                       # http://localhost:3000
 ```
 
@@ -431,45 +412,7 @@ upgrade the backend does on start.
 ## Platform Support
 
 The app runs on **Linux, macOS, and Windows**. Linux is the primary, fully
-documented target; the easiest cross-platform path everywhere is **Docker**,
-which makes the runtime identical on all three.
-
-| Platform | Status | Notes |
-| -------- | ------ | ----- |
-| **Linux**   | ✅ Fully supported | Intended target. Docker, systemd, and nginx instructions all apply. |
-| **macOS**   | ✅ Works natively  | Install deps with `brew install yt-dlp ffmpeg`. Docker Desktop also works. |
-| **Windows** | ⚠️ Works (some setup) | Easiest via **Docker Desktop (WSL2)**. Native runs need yt-dlp/ffmpeg on PATH. |
-
-### macOS
-
-- Install dependencies: `brew install yt-dlp ffmpeg`.
-- Follow the same **Backend** / **Frontend** dev steps above.
-- The default download folder `/downloads` isn't writable — open **Settings**
-  and change it to e.g. `/Users/<you>/Downloads`.
-- Docker Compose works too (Docker Desktop).
-
-### Windows
-
-The smoothest option is **Docker Desktop** with the WSL2 backend — then just run
-`docker compose up -d --build` and everything behaves exactly like Linux.
-
-To run natively instead:
-
-- Activate the venv with `venv\Scripts\activate` (PowerShell: `venv\Scripts\Activate.ps1`).
-- Install `yt-dlp` and `ffmpeg` and ensure they're on `PATH`, **or** set their
-  absolute `.exe` paths in **Settings** (e.g. `C:\tools\yt-dlp.exe`).
-- Change the download folder in **Settings** to a real path such as
-  `C:\Users\<you>\Downloads` (the `/downloads` default points at `C:\downloads`).
-- Requires a recent Python (3.11+); `asyncio` subprocess support uses the default
-  Proactor event loop, which is standard on modern Python + uvicorn.
-
-> **Tip (all platforms):** if a download fails immediately, it's almost always
-> because `yt-dlp` or `ffmpeg` can't be found. Verify them in **Settings** or run
-> `yt-dlp --version` / `ffmpeg -version` in the same shell that starts the backend.
-
----
-
-## Deployment
+tested target.
 
 ### Option A — Docker Compose (recommended)
 
@@ -478,25 +421,16 @@ The frontend image is built on Node 22 and runs as the unprivileged `node` user.
 
 ```bash
 # Choose where downloads land on the host (default ./downloads)
-export DOWNLOAD_DIR=/srv/media
-
+export DOWNLOAD_DIR=./downloads
 docker compose up -d --build
 ```
 
-- Frontend: `http://<host>:3000`
-- SQLite DB persists in `./data`, media in `$DOWNLOAD_DIR`
-- The backend is only reachable from the frontend container (not published)
+Open http://localhost:3000.
 
-> **Note:** the in-app download folder setting defaults to `/downloads`, which is
-> the path mounted inside the backend container. Leave it as `/downloads` when
-> running via Docker.
-
-**Keeping yt-dlp fresh:** YouTube changes constantly and an outdated yt-dlp
-starts failing within weeks (bot checks, "Requested format is not available").
 The backend container upgrades yt-dlp automatically on every start, so a plain
-`docker compose restart backend` picks up the latest release. Set
-`YTDLP_AUTO_UPDATE=0` in `docker-compose.yml` to pin the bundled version
-instead. The installed version is shown in **Settings → Tool paths**.
+`docker compose up -d --build` keeps it fresh. Set `YTDLP_AUTO_UPDATE=0` in
+`docker-compose.yml` to pin the bundled version instead. The installed version is
+shown in **Settings → Tool paths**.
 
 **Updating the app itself:** use the Update card in **Settings** ([Updating](#updating)), or `git pull` then `docker compose up -d --build`.
 
@@ -504,78 +438,44 @@ Put nginx (or any reverse proxy) in front of port 3000 for TLS — see below.
 
 ### Option B — Bare metal (systemd + nginx)
 
-**1. Install the app**
-
 ```bash
-sudo mkdir -p /opt/ytdlp-ui
-sudo chown $USER /opt/ytdlp-ui
-git clone https://github.com/thelorax1775/yt-dlp-ui.git /opt/ytdlp-ui
-cd /opt/ytdlp-ui
+# Backend
+cd backend
+python -m venv venv && source venv/bin/activate
+pip install -r requirements.txt
+uvicorn main:app --host 0.0.0.0 --port 8000
 
-# backend
-cd backend && python -m venv venv && ./venv/bin/pip install -r requirements.txt && cd ..
-# frontend
-cd frontend && npm ci && npm run build && cd ..
+# Frontend
+cd frontend
+npm ci && npm run build
+# Install the built app as a static site, proxy /api to the backend, run with PM2 or systemd
 ```
 
-**2. Backend service** — `/etc/systemd/system/ytdlp-backend.service`
+Create `ytdlp-backend.service` and `ytdlp-frontend.service` with the commands
+above, enable and start them. The backend image installs its own `yt-dlp` and
+`ffmpeg`; on bare metal you must provide them.
 
-```ini
-[Unit]
-Description=yt-dlp Web UI Backend
-After=network.target
+### nginx reverse proxy (either option)
 
-[Service]
-User=ytdlp
-WorkingDirectory=/opt/ytdlp-ui/backend
-Environment=DATABASE_PATH=/opt/ytdlp-ui/backend/ytdlp_ui.db
-ExecStart=/opt/ytdlp-ui/backend/venv/bin/uvicorn main:app --host 127.0.0.1 --port 8000
-Restart=on-failure
+```nginx
+server {
+    listen 80;
+    server_name ytdlp.example.com;
 
-[Install]
-WantedBy=multi-user.target
+    location / {
+        proxy_pass http://localhost:3000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+    location /api/ {
+        proxy_pass http://localhost:8000/;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+    }
+}
 ```
 
-**3. Frontend service** — `/etc/systemd/system/ytdlp-frontend.service`
-
-```ini
-[Unit]
-Description=yt-dlp Web UI Frontend
-After=network.target ytdlp-backend.service
-
-[Service]
-User=ytdlp
-WorkingDirectory=/opt/ytdlp-ui/frontend
-Environment=BACKEND_URL=http://127.0.0.1:8000
-Environment=PORT=3000
-ExecStart=/usr/bin/npm run start
-Restart=on-failure
-
-[Install]
-WantedBy=multi-user.target
-```
-
-**4. Enable and start**
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable --now ytdlp-backend ytdlp-frontend
-```
-
-**5. Reverse proxy** — copy `nginx.conf` to
-`/etc/nginx/sites-available/ytdlp-ui`, edit `server_name`, then:
-
-```bash
-sudo ln -s /etc/nginx/sites-available/ytdlp-ui /etc/nginx/sites-enabled/
-sudo nginx -t && sudo systemctl reload nginx
-# TLS:
-sudo certbot --nginx -d ytdlp.example.com
-```
-
-`proxy_buffering off` in the `/api/` block is required so live progress (SSE)
-streams through immediately.
-
----
+Add TLS with certbot (`certbot --nginx`) or your preferred method.
 
 ## Status
 
