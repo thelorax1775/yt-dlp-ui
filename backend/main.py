@@ -5,11 +5,12 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from api.routes import downloads, files, history, info, search, settings, shares
+from api.routes import downloads, files, history, info, search, settings, shares, update
 from models.database import init_db, seed_settings
 from services.cookies import ensure_cookies_file
 from services.download_manager import manager
 from services.share_manager import auto_mount_all
+from services.updater import resolve_after_restart
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -17,6 +18,7 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    resolve_after_restart()
     await init_db()
     await seed_settings()
     await ensure_cookies_file()
@@ -66,6 +68,7 @@ app.include_router(settings.router, prefix="/api", tags=["settings"])
 app.include_router(shares.router, prefix="/api", tags=["shares"])
 app.include_router(files.router, prefix="/api", tags=["files"])
 app.include_router(search.router, prefix="/api", tags=["search"])
+app.include_router(update.router, prefix="/api", tags=["update"])
 
 
 @app.get("/api/health")

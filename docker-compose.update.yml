@@ -1,0 +1,18 @@
+# Opt-in: lets the Update button rebuild and restart this stack.
+#   UPDATE_ADMIN_TOKEN=<long random> APP_DIR=$PWD docker compose \
+#     -f docker-compose.yml -f docker-compose.update.yml up -d --build
+# WARNING: the Docker socket is root on the host. Only enable this on a
+# trusted network and keep the admin token secret.
+services:
+  backend:
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      # Same path inside and outside, so relative paths in docker-compose.yml
+      # resolve to the same host folders when the updater runs compose.
+      - ${APP_DIR:?set APP_DIR to this folder's absolute path}:${APP_DIR}
+    environment:
+      - UPDATE_MODE=docker
+      - UPDATE_APP_DIR=${APP_DIR}
+      - UPDATE_ADMIN_TOKEN=${UPDATE_ADMIN_TOKEN:?set UPDATE_ADMIN_TOKEN}
+      # Optional, for a private repository (read access to contents).
+      - GITHUB_TOKEN=${GITHUB_TOKEN:-}
