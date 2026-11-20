@@ -1,8 +1,16 @@
 from datetime import datetime
-from typing import Optional
-from pydantic import BaseModel, Field, HttpUrl, field_validator, model_validator
+from typing import Annotated, Optional
+from pydantic import BaseModel, BeforeValidator, Field, HttpUrl, field_validator, model_validator
 
 from services import share_guard
+
+
+def _whole(v):
+    """Coerce float with fractional part to int by truncating; pass through int/None."""
+    return int(v) if isinstance(v, float) else v
+
+
+WholeNumber = Annotated[int, BeforeValidator(_whole)]
 
 
 def _guard(fn, *args):
@@ -20,7 +28,7 @@ class FormatInfo(BaseModel):
     fps: Optional[float] = None
     vcodec: Optional[str] = None
     acodec: Optional[str] = None
-    filesize: Optional[int] = None
+    filesize: Optional[WholeNumber] = None
     format_note: Optional[str] = None
 
 
@@ -28,14 +36,14 @@ class ResolutionOption(BaseModel):
     height: int
     label: str  # e.g. "1080p"
     ext: Optional[str] = None
-    filesize: Optional[int] = None
+    filesize: Optional[WholeNumber] = None
 
 
 class MetadataResponse(BaseModel):
     title: str
     thumbnail: Optional[str] = None
     uploader: Optional[str] = None
-    duration: Optional[int] = None
+    duration: Optional[WholeNumber] = None
     url: str
     formats: list[FormatInfo] = []
     resolutions: list[ResolutionOption] = []
@@ -212,9 +220,9 @@ class SearchResult(BaseModel):
     url: str
     uploader: Optional[str] = None
     channel_url: Optional[str] = None
-    duration: Optional[int] = None
+    duration: Optional[WholeNumber] = None
     upload_date: Optional[str] = None  # YYYY-MM-DD when known
-    view_count: Optional[int] = None
+    view_count: Optional[WholeNumber] = None
 
 
 class SearchResponse(BaseModel):
