@@ -37,9 +37,9 @@ The current build is a working MVP. Below is what's done and what could come nex
 
 ## 🧪 Quality
 
-- [ ] Backend unit tests (DownloadManager progress parsing, settings, API)
+- [x] Backend unit tests (DownloadManager progress parsing, settings, API)
 - [ ] Frontend component tests (Playwright/Vitest)
-- [ ] CI workflow (lint + build + test)
+- [x] CI workflow (lint + build + test) — GitHub Actions, see README "Running the checks"
 - [ ] Structured logging and a `/api/health` readiness check that verifies
       `yt-dlp` is callable
 
