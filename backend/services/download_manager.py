@@ -8,6 +8,8 @@ from collections import deque
 from datetime import datetime
 from typing import AsyncGenerator, Optional
 
+from sqlalchemy import select
+
 from models.database import (
     AsyncSessionLocal,
     HistoryModel,
@@ -15,9 +17,12 @@ from models.database import (
     SettingsModel,
 )
 from models.schemas import DownloadRequest, JobResponse
+from services import metadata as lookup
 from services.cookies import resolve_cookies_args
 
 logger = logging.getLogger(__name__)
+
+INTERRUPTED_MESSAGE = "interrupted by restart"
 
 # Compact one-line progress template emitted by yt-dlp per tick.
 PROGRESS_TEMPLATE = (
@@ -60,6 +65,9 @@ class Job:
         self.error: Optional[str] = None
         self.created_at = datetime.utcnow()
         self.updated_at = datetime.utcnow()
+        # Bumped on every retry. A queue entry only runs while it carries the
+        # job's current attempt, so a stale entry can never start a second run.
+        self.attempt = 0
 
     def to_response(self) -> JobResponse:
         return JobResponse(
@@ -84,7 +92,7 @@ class Job:
 
 class DownloadManager:
     def __init__(self) -> None:
-        self._queue: asyncio.Queue[Job] = asyncio.Queue()
+        self._queue: asyncio.Queue[tuple[Job, int]] = asyncio.Queue()
         self._jobs: dict[str, Job] = {}
         self._subscribers: list[asyncio.Queue] = []
         self._cancel_events: dict[str, asyncio.Event] = {}
@@ -96,6 +104,7 @@ class DownloadManager:
 
     async def start(self) -> None:
         self._running = True
+        await self._load_jobs()
         concurrency = await self._get_concurrency()
         for _ in range(concurrency):
             self._workers.append(asyncio.create_task(self._worker()))
@@ -111,6 +120,42 @@ class DownloadManager:
         for w in self._workers:
             w.cancel()
         self._workers.clear()
+
+    async def _load_jobs(self) -> None:
+        """Read the jobs table back. Nothing is restarted automatically.
+
+        Jobs that were queued or downloading when the last process died are
+        marked failed ("interrupted by restart") so they can be retried.
+        """
+        async with AsyncSessionLocal() as session:
+            rows = (await session.execute(select(JobModel))).scalars().all()
+            for row in rows:
+                job = Job(url=row.url, format_id=row.format_id)
+                job.id = row.id
+                job.title = row.title
+                job.thumbnail = row.thumbnail
+                job.status = row.status
+                job.progress = row.progress or 0.0
+                job.speed = row.speed
+                job.eta = row.eta
+                job.file_path = row.file_path
+                job.error = row.error
+                job.created_at = row.created_at or job.created_at
+                job.updated_at = row.updated_at or job.updated_at
+                if job.status in ("queued", "downloading"):
+                    job.status = "failed"
+                    job.error = INTERRUPTED_MESSAGE
+                    job.speed = None
+                    job.eta = None
+                    job.updated_at = datetime.utcnow()
+                    row.status = job.status
+                    row.error = job.error
+                    row.speed = None
+                    row.eta = None
+                    row.updated_at = job.updated_at
+                self._jobs[job.id] = job
+                self._cancel_events[job.id] = asyncio.Event()
+            await session.commit()
 
     async def _get_concurrency(self) -> int:
         async with AsyncSessionLocal() as session:
@@ -128,7 +173,7 @@ class DownloadManager:
         self._jobs[job.id] = job
         self._cancel_events[job.id] = asyncio.Event()
         await self._persist_job(job)
-        await self._queue.put(job)
+        await self._queue.put((job, job.attempt))
         await self._broadcast(job)
         return job
 
@@ -136,6 +181,7 @@ class DownloadManager:
         old = self._jobs.get(job_id)
         if not old or old.status not in ("failed", "cancelled"):
             return None
+        old.attempt += 1
         old.status = "queued"
         old.progress = 0.0
         old.speed = None
@@ -144,7 +190,7 @@ class DownloadManager:
         old.updated_at = datetime.utcnow()
         self._cancel_events[job_id] = asyncio.Event()
         await self._persist_job(old)
-        await self._queue.put(old)
+        await self._queue.put((old, old.attempt))
         await self._broadcast(old)
         return old
 
@@ -216,7 +262,7 @@ class DownloadManager:
 
     async def _write_history(self, job: Job) -> None:
         async with AsyncSessionLocal() as session:
-            session.add(
+            await session.merge(
                 HistoryModel(
                     id=job.id,
                     url=job.url,
@@ -288,19 +334,28 @@ class DownloadManager:
     async def _worker(self) -> None:
         while self._running:
             try:
-                job = await self._queue.get()
+                job, attempt = await self._queue.get()
             except asyncio.CancelledError:
                 break
 
+            # Skip entries left behind by a cancel or a retry: a job runs once
+            # per attempt, and only while it is still waiting in the queue.
             cancel_event = self._cancel_events.get(job.id)
-            if cancel_event and cancel_event.is_set():
+            if (
+                attempt != job.attempt
+                or job.status != "queued"
+                or cancel_event is None
+                or cancel_event.is_set()
+            ):
                 self._queue.task_done()
                 continue
 
             try:
-                await self._run_job(job)
+                await self._run_job(job, attempt, cancel_event)
             except Exception as exc:  # noqa: BLE001
                 logger.exception("Job %s failed", job.id)
+                if attempt != job.attempt:
+                    continue
                 job.status = "failed"
                 job.error = str(exc)
                 job.updated_at = datetime.utcnow()
@@ -309,12 +364,18 @@ class DownloadManager:
             finally:
                 self._queue.task_done()
 
-    async def _run_job(self, job: Job) -> None:
+    async def _run_job(self, job: Job, attempt: int, cancel_event: asyncio.Event) -> None:
         settings = await self._get_settings()
         os.makedirs(self._target_folder(job, settings), exist_ok=True)
 
-        # fetch lightweight metadata for title/thumbnail (best effort)
-        await self._enrich_metadata(job, settings)
+        # fetch lightweight metadata for title/thumbnail (best effort, but a
+        # lookup that hangs fails the job, and cancel kills it)
+        try:
+            await self._enrich_metadata(job, settings, cancel_event)
+        except lookup.LookupCancelled:
+            return  # cancel() already recorded the cancelled state
+        if cancel_event.is_set() or attempt != job.attempt:
+            return
 
         job.status = "downloading"
         job.updated_at = datetime.utcnow()
@@ -328,7 +389,6 @@ class DownloadManager:
             stderr=asyncio.subprocess.STDOUT,
         )
         self._processes[job.id] = proc
-        cancel_event = self._cancel_events.get(job.id)
 
         last_dest: Optional[str] = None
         final_path: Optional[str] = None
@@ -336,7 +396,7 @@ class DownloadManager:
         tail: deque[str] = deque(maxlen=8)
         assert proc.stdout is not None
         while True:
-            if cancel_event and cancel_event.is_set():
+            if cancel_event.is_set():
                 try:
                     proc.terminate()
                 except ProcessLookupError:
@@ -375,7 +435,10 @@ class DownloadManager:
         returncode = await proc.wait()
         self._processes.pop(job.id, None)
 
-        if cancel_event and cancel_event.is_set():
+        if attempt != job.attempt:
+            return
+
+        if cancel_event.is_set():
             job.status = "cancelled"
             job.updated_at = datetime.utcnow()
             await self._persist_job(job)
@@ -405,28 +468,33 @@ class DownloadManager:
             await self._persist_job(job)
             await self._broadcast(job)
 
-    async def _enrich_metadata(self, job: Job, settings: SettingsModel) -> None:
+    async def _enrich_metadata(
+        self, job: Job, settings: SettingsModel, cancel_event: asyncio.Event
+    ) -> None:
+        args = [
+            settings.ytdlp_path,
+            "--dump-single-json",
+            "--no-playlist",
+            "--no-warnings",
+            *resolve_cookies_args(settings),
+            job.url,
+        ]
+
+        def remember(proc) -> None:
+            self._processes[job.id] = proc
+
         try:
-            args = [
-                settings.ytdlp_path,
-                "--dump-single-json",
-                "--no-playlist",
-                "--no-warnings",
-                *resolve_cookies_args(settings),
-                job.url,
-            ]
-            proc = await asyncio.create_subprocess_exec(
-                *args,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-            )
-            stdout, _ = await proc.communicate()
-            if proc.returncode == 0:
+            returncode, stdout, _ = await lookup.run_lookup(args, cancel_event, remember)
+            if returncode == 0:
                 data = json.loads(stdout.decode(errors="replace"))
                 job.title = data.get("title")
                 job.thumbnail = data.get("thumbnail")
+        except (lookup.LookupCancelled, lookup.LookupTimeout):
+            raise
         except Exception:  # noqa: BLE001
             logger.debug("metadata enrichment failed for %s", job.id)
+        finally:
+            self._processes.pop(job.id, None)
 
 
 # global singleton

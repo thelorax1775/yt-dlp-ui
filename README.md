@@ -546,7 +546,10 @@ than Docker on Linux.
   a visitor can do but do not replace a login.
 - The **Files** page only browses the default download folder; files saved to
   a separate audio download folder are not listed there.
-- Job state lives in memory plus SQLite; in-flight jobs do not resume after a
-  backend restart (they can be retried from the Downloads/History view).
+- Jobs are saved in SQLite and listed again after a backend restart. Jobs
+  that were queued or downloading when the backend stopped are shown as
+  failed with "interrupted by restart"; nothing restarts on its own. Retry
+  them from the Downloads view. A title lookup that takes longer than 60 s is
+  stopped and fails the job.
 
 See [TODO.md](./TODO.md) for the roadmap.
