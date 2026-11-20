@@ -206,6 +206,7 @@ URL, and `resolved_channel` (`name`, `url`) is set when `latest_from_channel`
 picked it. Each result is completed with one extra yt-dlp metadata call (the
 listing itself carries no upload date), run one at a time, so a search takes a
 few seconds per result. Fields yt-dlp does not report are `null`.
+Search lookups use the same time limit as `/api/info`.
 
 ---
 
