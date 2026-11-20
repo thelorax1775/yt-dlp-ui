@@ -10,6 +10,7 @@ CAP_SYS_ADMIN); when running in Docker the backend container needs
 import asyncio
 import logging
 import os
+import re
 import stat
 import tempfile
 
@@ -41,8 +42,17 @@ def is_mounted(mount_point: str) -> bool:
         with open("/proc/mounts", "r", encoding="utf-8") as fh:
             for line in fh:
                 parts = line.split()
-                if len(parts) >= 2 and parts[1] == target:
-                    return True
+                if len(parts) >= 2:
+                    # Kernel writes special characters in /proc/mounts as octal escapes:
+                    # space as \040, tab as \011, newline as \012, backslash as \134
+                    # Decode them before comparing
+                    decoded = re.sub(
+                        r"\\([0-7]{3})",
+                        lambda m: chr(int(m.group(1), 8)),
+                        parts[1]
+                    )
+                    if decoded == target:
+                        return True
     except FileNotFoundError:
         # /proc/mounts not available (e.g. non-Linux dev host)
         return False
