@@ -1,6 +1,8 @@
 import asyncio
 import json
 import logging
+import os
+import signal
 from typing import Optional
 
 from models.database import AsyncSessionLocal, SettingsModel
@@ -8,6 +10,76 @@ from models.schemas import FormatInfo, MetadataResponse, ResolutionOption
 from services.cookies import resolve_cookies_args
 
 logger = logging.getLogger(__name__)
+
+# A title/info lookup that takes longer than this is killed. Read at call time,
+# so tests can lower it.
+LOOKUP_TIMEOUT_SECONDS = 60
+
+
+class LookupTimeout(Exception):
+    """The yt-dlp lookup ran past LOOKUP_TIMEOUT_SECONDS and was killed."""
+
+
+class LookupCancelled(Exception):
+    """The lookup was cancelled and its process killed."""
+
+
+def kill_process(proc) -> None:
+    """SIGKILL the process and anything it started (it leads its own session)."""
+    try:
+        os.killpg(proc.pid, signal.SIGKILL)
+        return
+    except (ProcessLookupError, PermissionError, TypeError, AttributeError):
+        pass
+    try:
+        proc.kill()
+    except (ProcessLookupError, AttributeError):
+        pass
+
+
+async def run_lookup(args, cancel_event: Optional[asyncio.Event] = None, on_start=None):
+    """Run a yt-dlp lookup; return (returncode, stdout, stderr).
+
+    Raises LookupTimeout after LOOKUP_TIMEOUT_SECONDS and LookupCancelled once
+    ``cancel_event`` is set. In both cases, and when the calling task is
+    cancelled, the process is killed and reaped before this returns.
+    """
+    proc = await asyncio.create_subprocess_exec(
+        *args,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        start_new_session=True,
+    )
+    if on_start:
+        on_start(proc)
+    work = asyncio.ensure_future(proc.communicate())
+    waiters = {work}
+    cancel_wait = None
+    if cancel_event is not None:
+        cancel_wait = asyncio.ensure_future(cancel_event.wait())
+        waiters.add(cancel_wait)
+    try:
+        done, _ = await asyncio.wait(
+            waiters, timeout=LOOKUP_TIMEOUT_SECONDS, return_when=asyncio.FIRST_COMPLETED
+        )
+        if work in done:
+            stdout, stderr = work.result()
+            return proc.returncode, stdout, stderr
+        if cancel_wait is not None and cancel_wait in done:
+            raise LookupCancelled()
+        raise LookupTimeout(
+            f"title lookup timed out after {LOOKUP_TIMEOUT_SECONDS} s and was stopped"
+        )
+    finally:
+        if not work.done():
+            kill_process(proc)
+            work.cancel()
+            try:
+                await asyncio.wait_for(proc.wait(), timeout=5)
+            except (asyncio.TimeoutError, ProcessLookupError):
+                pass
+        if cancel_wait is not None:
+            cancel_wait.cancel()
 
 
 async def _get_settings() -> Optional[SettingsModel]:
@@ -36,14 +108,12 @@ async def fetch_metadata(url: str) -> MetadataResponse:
         url,
     ]
 
-    proc = await asyncio.create_subprocess_exec(
-        *args,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await proc.communicate()
+    try:
+        returncode, stdout, stderr = await run_lookup(args)
+    except LookupTimeout as exc:
+        raise ValueError(f"yt-dlp failed: {exc}")
 
-    if proc.returncode != 0:
+    if returncode != 0:
         err = extract_error(stderr.decode(errors="replace"))
         raise ValueError(f"yt-dlp failed: {err}")
 

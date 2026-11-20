@@ -68,6 +68,9 @@ class FakeProcess:
     def terminate(self) -> None:
         self.terminated = True
 
+    def kill(self) -> None:
+        self.terminated = True
+
 
 class FakeSubprocess:
     """Stand-in for ``asyncio.create_subprocess_exec``.
