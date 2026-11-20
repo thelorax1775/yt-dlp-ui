@@ -37,6 +37,7 @@ async def _get_ytdlp_version(ytdlp_path: str) -> str | None:
 async def _to_response(row: SettingsModel) -> SettingsResponse:
     return SettingsResponse(
         download_folder=row.download_folder,
+        audio_download_folder=row.audio_download_folder,
         audio_format=row.audio_format,
         concurrent_downloads=row.concurrent_downloads,
         ytdlp_path=row.ytdlp_path,
@@ -89,6 +90,11 @@ async def update_settings(update: SettingsUpdate):
         if "cookies_file_path" in data:
             path = (data.pop("cookies_file_path") or "").strip()
             row.cookies_file_path = path or None
+        # Same "" = clear handling: an empty audio folder means "use the
+        # default download folder", not a literal empty path.
+        if "audio_download_folder" in data:
+            folder = (data.pop("audio_download_folder") or "").strip()
+            row.audio_download_folder = folder or None
 
         for key, value in data.items():
             if value is not None:

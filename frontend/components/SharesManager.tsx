@@ -5,6 +5,7 @@ import {
   FolderInput,
   HardDriveDownload,
   Loader2,
+  Music,
   Plug,
   PlugZap,
   Plus,
@@ -144,6 +145,17 @@ export function SharesManager() {
     }
   }
 
+  async function setAsAudioFolder(s: Share) {
+    try {
+      await api.updateSettings({ audio_download_folder: s.mount_point });
+      toast.success("Audio folder set", { description: s.mount_point });
+    } catch (e) {
+      toast.error("Could not update settings", {
+        description: e instanceof Error ? e.message : String(e),
+      });
+    }
+  }
+
   return (
     <Card>
       <CardHeader className="flex flex-row items-start justify-between gap-3 space-y-0">
@@ -221,6 +233,14 @@ export function SharesManager() {
                     onClick={() => setAsDownloadFolder(s)}
                   >
                     <FolderInput className="h-4 w-4" /> Use
+                  </Button>
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    title="Use for audio-only downloads"
+                    onClick={() => setAsAudioFolder(s)}
+                  >
+                    <Music className="h-4 w-4" /> Audio
                   </Button>
                   <Button
                     variant="ghost"
