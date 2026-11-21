@@ -31,11 +31,12 @@ def upd(backend, monkeypatch):
     monkeypatch.setenv("UPDATE_APP_DIR", str(backend.tmp_path / "app"))
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     (backend.tmp_path / "app").mkdir()
+    updater._cache_clear()
     return updater
 
 
 def github(monkeypatch, upd, routes):
-    """routes: path -> (status, json) or an exception instance."""
+    """routes: path -> (status, json) or (status, json, headers) or an exception instance."""
     seen = []
 
     def handler(request: httpx.Request):
@@ -45,6 +46,9 @@ def github(monkeypatch, upd, routes):
             raise r
         if r is None:
             return httpx.Response(404, json={})
+        if len(r) == 3:
+            status, json_data, headers = r
+            return httpx.Response(status, json=json_data, headers=headers)
         return httpx.Response(r[0], json=r[1])
 
     monkeypatch.setattr(upd, "_transport", httpx.MockTransport(handler))
@@ -91,6 +95,8 @@ async def test_check_older_equal_newer_by_sha(upd, monkeypatch):
 
     routes[f"/repos/thelorax1775/yt-dlp-ui/compare/{OLD}...{NEW}"] = (200, {"status": "behind"})
     monkeypatch.setenv("APP_VERSION", OLD)
+    # Clear cache so the new compare result is fetched
+    upd._cache_clear()
     r = await upd.check()
     assert (r["state"], r["update_available"]) == ("ahead", False)
 

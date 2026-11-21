@@ -29,12 +29,39 @@ SYSTEMD_UNITS = ("ytdlp-backend", "ytdlp-frontend")
 DOCKER_CLI_IMAGE = "docker:27-cli"
 STEP_TIMEOUT = 1800
 MAX_LOG_LINES = 400
+CHECK_CACHE_SECONDS = 600
 
 # Tests replace this to avoid the network.
 _transport: httpx.AsyncBaseTransport | None = None
 
 # Lock to prevent concurrent start_update calls during the "starting" phase
 _start_update_lock = asyncio.Lock()
+
+# Cache for latest_version()
+_cache_latest_version: dict | None = None
+_cache_latest_version_time: float = 0.0
+
+# Cache for _relation() - keyed on (installed, latest_sha)
+_cache_relation: dict[tuple[str, str], tuple[str, float]] = {}
+
+
+def _cache_clear() -> None:
+    """Clear the latest_version and relation caches. For tests."""
+    global _cache_latest_version, _cache_latest_version_time, _cache_relation
+    _cache_latest_version = None
+    _cache_latest_version_time = 0.0
+    _cache_relation = {}
+
+
+def _is_rate_limit_response(r: httpx.Response) -> bool:
+    """Check if response indicates GitHub rate limit exceeded."""
+    if r.status_code == 429:
+        return True
+    if r.status_code == 403:
+        remaining = r.headers.get("x-ratelimit-remaining")
+        if remaining is not None and remaining == "0":
+            return True
+    return False
 
 
 def mode() -> str | None:
@@ -129,22 +156,53 @@ async def _get(path: str):
 
 async def latest_version() -> dict:
     """Newest release (tag + commit) or, with no releases, the default branch head."""
+    global _cache_latest_version, _cache_latest_version_time
     if not _REPO_RE.match(REPO):
         raise ValueError("UPDATE_REPO is not owner/name")
+
+    # Check cache
+    now = time.monotonic()
+    if _cache_latest_version is not None and (now - _cache_latest_version_time) < CHECK_CACHE_SECONDS:
+        return _cache_latest_version
+
+    return await _latest_version_fresh()
+
+
+async def _latest_version_fresh() -> dict:
+    """Latest version without using cache. Used by check(fresh=True)."""
+    global _cache_latest_version, _cache_latest_version_time
+    if not _REPO_RE.match(REPO):
+        raise ValueError("UPDATE_REPO is not owner/name")
+
     r = await _get(f"/repos/{REPO}/releases/latest")
+    # Check for rate limit on any response FIRST
+    if _is_rate_limit_response(r):
+        raise LookupError("rate_limit")
     if r.status_code == 200:
         tag = str(r.json().get("tag_name") or "")
         c = await _get(f"/repos/{REPO}/commits/{quote(tag, safe='')}")
+        if _is_rate_limit_response(c):
+            raise LookupError("rate_limit")
         if c.status_code == 200 and _SHA.match(str(c.json().get("sha", ""))):
-            return {"kind": "release", "label": tag, "sha": c.json()["sha"]}
+            result = {"kind": "release", "label": tag, "sha": c.json()["sha"]}
+            # Cache successful result
+            _cache_latest_version = result
+            _cache_latest_version_time = time.monotonic()
+            return result
         raise LookupError(f"could not resolve release {tag!r}")
     if r.status_code in (401, 403, 404):
         if r.status_code != 404:
             raise PermissionError(r.status_code)
         c = await _get(f"/repos/{REPO}/commits/HEAD")
+        if _is_rate_limit_response(c):
+            raise LookupError("rate_limit")
         if c.status_code == 200 and _SHA.match(str(c.json().get("sha", ""))):
             sha = c.json()["sha"]
-            return {"kind": "branch", "label": sha[:7], "sha": sha}
+            result = {"kind": "branch", "label": sha[:7], "sha": sha}
+            # Cache successful result
+            _cache_latest_version = result
+            _cache_latest_version_time = time.monotonic()
+            return result
         if c.status_code in (401, 403, 404):
             raise PermissionError(c.status_code)
     raise LookupError(f"GitHub answered {r.status_code}")
@@ -157,15 +215,30 @@ async def _relation(installed: str, latest_sha: str) -> str:
         return quick
     if not _SHA.match(installed):
         return "unknown"
+
+    # Check relation cache
+    now = time.monotonic()
+    cache_key = (installed, latest_sha)
+    if cache_key in _cache_relation:
+        cached_result, cached_time = _cache_relation[cache_key]
+        if (now - cached_time) < CHECK_CACHE_SECONDS:
+            return cached_result
+
     r = await _get(f"/repos/{REPO}/compare/{installed}...{latest_sha}")
+    if _is_rate_limit_response(r):
+        raise LookupError("rate_limit")
     if r.status_code != 200:
         return "unknown"
-    return {"identical": "equal", "ahead": "older", "behind": "newer", "diverged": "diverged"}.get(
+    result = {"identical": "equal", "ahead": "older", "behind": "newer", "diverged": "diverged"}.get(
         r.json().get("status"), "unknown"
     )
 
+    # Cache successful result
+    _cache_relation[cache_key] = (result, time.monotonic())
+    return result
 
-async def check() -> dict:
+
+async def check(fresh: bool = False) -> dict:
     installed = installed_version()
     out = {
         "installed": installed,
@@ -178,7 +251,10 @@ async def check() -> dict:
         "update_available": False,
     }
     try:
-        latest = await latest_version()
+        if fresh:
+            latest = await _latest_version_fresh()
+        else:
+            latest = await latest_version()
     except PermissionError:
         out["state"] = "unreachable"
         out["message"] = (
@@ -188,12 +264,33 @@ async def check() -> dict:
             else "Cannot reach GitHub: the configured GITHUB_TOKEN was refused."
         )
         return out
-    except (httpx.HTTPError, LookupError, ValueError) as e:
+    except LookupError as e:
+        if str(e) == "rate_limit":
+            out["state"] = "unreachable"
+            out["message"] = (
+                "GitHub's request limit is used up; try again later or set GITHUB_TOKEN on the backend."
+            )
+            return out
+        out["state"] = "unreachable"
+        out["message"] = f"Cannot reach GitHub ({type(e).__name__})."
+        return out
+    except (httpx.HTTPError, ValueError) as e:
         out["state"] = "unreachable"
         out["message"] = f"Cannot reach GitHub ({type(e).__name__})."
         return out
     out["latest"] = latest
-    rel = await _relation(installed, latest["sha"])
+    try:
+        rel = await _relation(installed, latest["sha"])
+    except LookupError as e:
+        if str(e) == "rate_limit":
+            out["state"] = "unreachable"
+            out["message"] = (
+                "GitHub's request limit is used up; try again later or set GITHUB_TOKEN on the backend."
+            )
+            return out
+        out["state"] = "unreachable"
+        out["message"] = f"Cannot reach GitHub ({type(e).__name__})."
+        return out
     if rel == "equal":
         out["state"], out["message"] = "up_to_date", "Up to date."
     elif rel == "newer":
@@ -386,7 +483,8 @@ async def start_update() -> dict:
         cur = get_job()
         if cur and cur["status"] in ("running", "restarting") and _task and not _task.done():
             raise RuntimeError("busy")
-        info = await check()
+        # Use check(fresh=True) to bypass cache and get fresh GitHub data
+        info = await check(fresh=True)
         if info["state"] == "unreachable" or not info["latest"]:
             raise ConnectionError(info["message"])
         if not info["update_available"]:
