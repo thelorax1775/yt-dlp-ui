@@ -5,7 +5,6 @@ import os
 import re
 import uuid
 from collections import deque
-from datetime import datetime
 from typing import AsyncGenerator, Optional
 
 from sqlalchemy import select
@@ -15,6 +14,7 @@ from models.database import (
     HistoryModel,
     JobModel,
     SettingsModel,
+    utcnow,
 )
 from models.schemas import DownloadRequest, JobResponse
 from services import metadata as lookup
@@ -63,8 +63,8 @@ class Job:
         self.eta: Optional[str] = None
         self.file_path: Optional[str] = None
         self.error: Optional[str] = None
-        self.created_at = datetime.utcnow()
-        self.updated_at = datetime.utcnow()
+        self.created_at = utcnow()
+        self.updated_at = utcnow()
         # Bumped on every retry. A queue entry only runs while it carries the
         # job's current attempt, so a stale entry can never start a second run.
         self.attempt = 0
@@ -154,7 +154,7 @@ class DownloadManager:
                     job.error = INTERRUPTED_MESSAGE
                     job.speed = None
                     job.eta = None
-                    job.updated_at = datetime.utcnow()
+                    job.updated_at = utcnow()
                     row.status = job.status
                     row.error = job.error
                     row.speed = None
@@ -194,7 +194,7 @@ class DownloadManager:
         old.speed = None
         old.eta = None
         old.error = None
-        old.updated_at = datetime.utcnow()
+        old.updated_at = utcnow()
         self._cancel_events[job_id] = asyncio.Event()
         await self._persist_job(old)
         await self._queue.put((old, old.attempt))
@@ -216,7 +216,7 @@ class DownloadManager:
                 pass
         if job.status in ("queued", "downloading"):
             job.status = "cancelled"
-            job.updated_at = datetime.utcnow()
+            job.updated_at = utcnow()
             await self._persist_job(job)
             await self._broadcast(job)
         return True
@@ -284,7 +284,7 @@ class DownloadManager:
                     thumbnail=job.thumbnail,
                     file_path=job.file_path,
                     format_id=job.format_id,
-                    finished_at=datetime.utcnow(),
+                    finished_at=utcnow(),
                 )
             )
             await session.commit()
@@ -372,7 +372,7 @@ class DownloadManager:
                     continue
                 job.status = "failed"
                 job.error = str(exc)
-                job.updated_at = datetime.utcnow()
+                job.updated_at = utcnow()
                 await self._persist_job(job)
                 await self._broadcast(job)
             finally:
@@ -392,7 +392,7 @@ class DownloadManager:
             return
 
         job.status = "downloading"
-        job.updated_at = datetime.utcnow()
+        job.updated_at = utcnow()
         await self._persist_job(job)
         await self._broadcast(job)
 
@@ -428,7 +428,7 @@ class DownloadManager:
                 job.progress = float(percent)
                 job.speed = speed if speed not in ("NA", "Unknown") else None
                 job.eta = eta if eta not in ("NA", "Unknown") else None
-                job.updated_at = datetime.utcnow()
+                job.updated_at = utcnow()
                 await self._broadcast(job)
                 continue
 
@@ -455,7 +455,7 @@ class DownloadManager:
 
         if cancel_event.is_set():
             job.status = "cancelled"
-            job.updated_at = datetime.utcnow()
+            job.updated_at = utcnow()
             await self._persist_job(job)
             await self._broadcast(job)
             return
@@ -467,7 +467,7 @@ class DownloadManager:
             job.eta = None
             if final_path or last_dest:
                 job.file_path = final_path or last_dest
-            job.updated_at = datetime.utcnow()
+            job.updated_at = utcnow()
             await self._persist_job(job)
             await self._write_history(job)
             await self._broadcast(job)
@@ -479,7 +479,7 @@ class DownloadManager:
                 job.error = "\n".join(tail)
             else:
                 job.error = f"yt-dlp exited with code {returncode}"
-            job.updated_at = datetime.utcnow()
+            job.updated_at = utcnow()
             await self._persist_job(job)
             await self._broadcast(job)
 
