@@ -80,6 +80,11 @@ async def list_dir(rel: str = "") -> FileListResponse:
     root_real = os.path.realpath(root)
     target = _safe_join(root, rel)
 
+    # A missing root is normal on a fresh install: show an empty folder.
+    # Any other missing path (or a path that is a file) is "not found".
+    if target != root_real and not os.path.isdir(target):
+        raise FileNotFoundError("Folder not found")
+
     entries: list[FileEntry] = []
     if os.path.isdir(target):
         for name in sorted(os.listdir(target), key=str.lower):
@@ -132,8 +137,12 @@ async def rename_path(rel: str, new_name: str) -> FileEntry:
 async def make_dir(rel: str, name: str) -> FileEntry:
     root = await get_root()
     parent = _safe_join(root, rel)
-    target = _safe_join(root, _rel_path(root, os.path.join(parent, name)))
-    os.makedirs(target, exist_ok=False)
+    if not os.path.exists(parent):
+        raise FileNotFoundError("Folder not found")
+    if not os.path.isdir(parent):
+        raise ValueError("Not a folder")
+    target = os.path.join(parent, name)
+    os.mkdir(target)
     return _entry(root, target)
 
 
