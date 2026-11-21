@@ -59,6 +59,42 @@ def test_other_output_is_not_mistaken_for_progress(backend, line):
     assert backend.download_manager.PROGRESS_RE.match(line) is None
 
 
+def test_progress_with_unknown_speed_is_parsed(backend, client, downloads_dir, wait_for_job):
+    # yt-dlp's _speed_str is " Unknown B/s" (two words) before a speed is known.
+    line = "PROGRESS downloading   5.0% Unknown B/s Unknown"
+    match = backend.download_manager.PROGRESS_RE.match(line)
+
+    assert match is not None
+
+    backend.subprocess.download_lines = [line]
+    backend.subprocess.download_returncode = 1
+    queued = client.post("/api/download", json={"url": "https://example.invalid/v"}).json()
+    job = wait_for_job(queued["id"])
+
+    assert job["progress"] == 5.0
+    assert job["speed"] is None
+    assert job["eta"] is None
+
+
+def test_progress_with_na_percent_keeps_previous_progress(
+    backend, client, downloads_dir, wait_for_job
+):
+    # An unknown total size (HLS/live) is reported as "N/A%".
+    # First line has different speed/ETA so we can tell whether the N/A
+    # line was parsed (updates speed/ETA) or skipped (keeps old values).
+    backend.subprocess.download_lines = [
+        "PROGRESS downloading  42.0% 3.00MiB/s 00:20",
+        "PROGRESS downloading  N/A% 1.00MiB/s 00:10",
+    ]
+    backend.subprocess.download_returncode = 1
+    queued = client.post("/api/download", json={"url": "https://example.invalid/v"}).json()
+    job = wait_for_job(queued["id"])
+
+    assert job["progress"] == 42.0
+    assert job["speed"] == "1.00MiB/s"
+    assert job["eta"] == "00:10"
+
+
 def test_final_path_line_is_parsed(backend):
     match = backend.download_manager.FILEPATH_RE.match("OUTPATH /downloads/My Clip [x].mp4")
 
@@ -148,6 +184,16 @@ def test_build_args_explicit_format(backend):
 
     assert option_value(args, "-f") == "bestvideo[height<=720]+bestaudio/best"
     assert args.count("-f") == 1
+
+
+def test_build_args_escapes_percent_in_folder_path(backend):
+    args = build_args(
+        backend,
+        None,
+        download_folder="/downloads/Rock %(uploader)s",
+    )
+    out_template = option_value(args, "-o")
+    assert out_template == "/downloads/Rock %%(uploader)s/%(title)s.%(ext)s"
 
 
 def test_build_args_uses_configured_folder_binary_and_ffmpeg(backend):
@@ -250,6 +296,22 @@ def test_failed_download_reports_the_error_and_is_not_in_history(
     assert job["status"] == "failed"
     assert job["error"] == "ERROR: [generic] Unable to download webpage: HTTP Error 404: Not Found"
     assert client.get("/api/history").json() == []
+
+
+def test_failed_job_error_has_no_progress_noise(
+    client, backend, downloads_dir, wait_for_job
+):
+    backend.subprocess.download_lines = [
+        "PROGRESS downloading  N/A% 1.00MiB/s 00:10",
+        "PROGRESS downloading   5.0% Unknown B/s Unknown",
+    ]
+    backend.subprocess.download_returncode = 1
+    queued = client.post("/api/download", json={"url": "https://example.invalid/v"}).json()
+    job = wait_for_job(queued["id"])
+
+    assert job["status"] == "failed"
+    assert "PROGRESS" not in job["error"]
+    assert job["error"] == "yt-dlp exited with code 1"
 
 
 def test_audio_job_is_written_to_the_audio_folder_and_video_job_to_the_download_folder(

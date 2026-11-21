@@ -120,3 +120,10 @@ class TestFractionalNumbersInSearch:
         body = response.json()
         assert body["results"][0]["duration"] == 10
         assert body["results"][0]["view_count"] == 3
+
+
+def test_metadata_with_null_title_does_not_500(client, backend):
+    backend.subprocess.metadata = {"title": None, "formats": []}
+    r = client.get("/api/info", params={"url": "https://example.invalid/v"})
+    assert r.status_code == 200, (r.status_code, r.text)
+    assert r.json()["title"] == "Unknown"
