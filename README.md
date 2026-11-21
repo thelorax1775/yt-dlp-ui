@@ -410,7 +410,7 @@ Enable it with environment variables on the backend:
 | `UPDATE_ADMIN_TOKEN` | Required. Long random secret; sent by the UI as `X-Admin-Token` and compared in constant time. Unset: the button is disabled and `POST /api/update` answers `403`. The custom header also means another website cannot trigger it (its preflight gets no CORS permission). |
 | `UPDATE_MODE` | `docker` or `systemd`, matching how you deploy. Unset: check only. |
 | `UPDATE_APP_DIR` | The git checkout to update (default: the repository this backend runs from). |
-| `GITHUB_TOKEN` | Optional, for a private repository (read access to contents). Read from the environment only; never shown in the UI, never logged, never passed to the update commands. Without it a private repository shows "Cannot reach GitHub". |
+| `GITHUB_TOKEN` | Optional, for a private repository (read access to contents). Read from the environment only; never shown in the UI, never logged. It is passed only to the Docker compose commands, through their environment, so a restarted backend keeps it. Without it a private repository shows "Cannot reach GitHub". |
 | `APP_VERSION` | Commit baked into the image (compose passes it as a build argument). Without it the version is read from the checkout. |
 
 - **Docker:** start with the opt-in override
@@ -418,6 +418,15 @@ Enable it with environment variables on the backend:
   It mounts the Docker socket (root-equivalent on the host: trusted networks
   only) and the checkout at the same path. The restart runs in a short-lived
   helper container (`docker:27-cli`) so it survives the backend being replaced.
+  Build and restart use the same files the stack was started with:
+  `docker-compose.update.yml` sets `UPDATE_COMPOSE_FILES`
+  (`docker-compose.yml,docker-compose.update.yml`, plain file names in the
+  checkout, set only by you, never by a request), so the restarted backend keeps
+  the socket, the checkout mount and the updater settings. If you add another
+  `-f` file, append it to that list. Compose reads `APP_DIR`,
+  `UPDATE_ADMIN_TOKEN` and `GITHUB_TOKEN` from the environment of the compose
+  and helper processes (passed by name, `docker run -e NAME`), so the values
+  never appear in the job log or the status endpoint.
 - **systemd:** set `UPDATE_MODE=systemd` and the variables above in
   `ytdlp-backend.service`, and allow the service user to run
   `systemctl restart ytdlp-backend ytdlp-frontend` (a sudoers rule or polkit
@@ -425,7 +434,10 @@ Enable it with environment variables on the backend:
   Run the update commands as the user that owns the checkout.
 
 **Manual fallback** (always works): `git pull`, then
-`docker compose up -d --build` (Docker), or
+`docker compose up -d --build` (Docker; if you enabled the updater, repeat the
+full command instead:
+`UPDATE_ADMIN_TOKEN=... APP_DIR=$PWD APP_VERSION=$(git rev-parse HEAD) docker compose -f docker-compose.yml -f docker-compose.update.yml up -d --build`,
+otherwise the updater is dropped and the card shows the version as unknown), or
 `cd backend && ./venv/bin/pip install -r requirements.txt`,
 `cd ../frontend && npm ci && npm run build`, and
 `sudo systemctl restart ytdlp-backend ytdlp-frontend` (systemd). To go back,

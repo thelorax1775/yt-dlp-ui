@@ -361,9 +361,11 @@ async def _run(argv: list[str], cwd: Path, extra_env: dict | None = None) -> str
     if argv[0] == "git":
         argv = ["git", "-c", f"safe.directory={cwd}", *argv[1:]]
     _log("$ " + " ".join(argv))
-    env = {**os.environ, **(extra_env or {})}
-    env.pop("GITHUB_TOKEN", None)
-    env.pop("UPDATE_ADMIN_TOKEN", None)
+    # Secrets are dropped from the inherited environment; only a step that
+    # needs them (the compose steps) gets them, through extra_env. Values in
+    # extra_env are never logged: _log above only sees argv.
+    env = {k: v for k, v in os.environ.items() if k not in ("GITHUB_TOKEN", "UPDATE_ADMIN_TOKEN")}
+    env.update(extra_env or {})
     try:
         proc = await asyncio.create_subprocess_exec(
             *argv,
@@ -383,11 +385,49 @@ async def _run(argv: list[str], cwd: Path, extra_env: dict | None = None) -> str
     return text.strip()
 
 
+DEFAULT_COMPOSE_FILES = ("docker-compose.yml", "docker-compose.update.yml")
+_COMPOSE_FILE_RE = re.compile(r"^[A-Za-z0-9_][A-Za-z0-9_.-]*$")
+
+
+def compose_files(d: Path) -> list[Path]:
+    """The compose files this stack was started with, in order.
+
+    Read from UPDATE_COMPOSE_FILES (comma-separated names inside the checkout;
+    docker-compose.update.yml sets it), else docker-compose.yml plus the
+    updater override. Only the operator's environment decides: never a request.
+    Plain file names only, no paths, so nothing can point outside the checkout.
+    """
+    raw = os.environ.get("UPDATE_COMPOSE_FILES", "").strip()
+    names = [n.strip() for n in raw.split(",") if n.strip()] if raw else list(DEFAULT_COMPOSE_FILES)
+    for n in names:
+        if not _COMPOSE_FILE_RE.match(n):
+            raise StepFailed("UPDATE_COMPOSE_FILES must list plain file names inside the app folder")
+    return [d / n for n in names]
+
+
+def _compose_env(d: Path, sha: str) -> dict:
+    """Values the compose files interpolate (`${APP_DIR:?}`, `${UPDATE_ADMIN_TOKEN:?}`).
+
+    Handed to the child through its environment, never through argv or the log.
+    """
+    env = {"APP_VERSION": sha, "APP_DIR": str(d)}
+    for k in ("UPDATE_ADMIN_TOKEN", "GITHUB_TOKEN"):
+        if os.environ.get(k):
+            env[k] = os.environ[k]
+    return env
+
+
+def _compose_argv(d: Path) -> list[str]:
+    argv = ["compose"]
+    for f in compose_files(d):
+        argv += ["-f", str(f)]
+    return argv
+
+
 def _build_steps(m: str, d: Path, sha: str) -> list[tuple[list[str], dict]]:
     """Steps that prepare the new version without touching the running one."""
     if m == "docker":
-        compose = ["docker", "compose", "-f", str(d / "docker-compose.yml")]
-        return [(compose + ["build"], {"APP_VERSION": sha})]
+        return [(["docker", *_compose_argv(d), "build"], _compose_env(d, sha))]
     return [
         ([str(d / "backend/venv/bin/pip"), "install", "-r", str(d / "backend/requirements.txt")], {}),
         (["npm", "--prefix", str(d / "frontend"), "ci"], {}),
@@ -400,16 +440,23 @@ def _apply_steps(m: str, d: Path, sha: str) -> list[tuple[list[str], dict]]:
         # `up -d` replaces this very container, which would kill the command
         # half way. A detached helper container (docker CLI image) outlives it.
         # The app folder is mounted at the same path the host uses.
+        # Same compose files as the running stack, so the updater override
+        # survives. `-e NAME` without a value copies it from the docker
+        # client's environment, so secrets never appear in argv or the log.
+        env = _compose_env(d, sha)
+        passed = []
+        for k in env:
+            passed += ["-e", k]
         return [
             (
                 [
                     "docker", "run", "-d", "--rm",
                     "-v", "/var/run/docker.sock:/var/run/docker.sock",
                     "-v", f"{d}:{d}", "-w", str(d),
-                    "-e", f"APP_VERSION={sha}",
-                    DOCKER_CLI_IMAGE, "compose", "-f", str(d / "docker-compose.yml"), "up", "-d",
+                    *passed,
+                    DOCKER_CLI_IMAGE, *_compose_argv(d), "up", "-d",
                 ],
-                {},
+                env,
             )
         ]
     # Frontend first, backend last: restarting the backend ends this job's process.

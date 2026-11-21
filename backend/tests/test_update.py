@@ -2,6 +2,7 @@
 
 import asyncio
 import functools
+import json
 import time
 
 import httpx
@@ -245,6 +246,67 @@ async def test_docker_mode_builds_then_restarts_via_helper_container(upd, monkey
     up = next(c for c in cmds if c.startswith("docker run -d --rm"))
     assert cmds.index(build) < cmds.index(up)
     assert {"APP_VERSION": NEW}.items() <= next(e for a, e in r.calls if " ".join(a) == build).items()
+
+
+def _docker_run(upd, monkeypatch, runner, **env):
+    monkeypatch.setenv("UPDATE_MODE", "docker")
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_sekret-value")
+    for k, v in env.items():
+        monkeypatch.setenv(k, v)
+    return run_job(upd, monkeypatch, runner)
+
+
+def _files(argv):
+    return [argv[i + 1].rsplit("/", 1)[-1] for i, a in enumerate(argv) if a == "-f"]
+
+
+@sync
+async def test_docker_update_keeps_the_updater_override(upd, monkeypatch):
+    r = Runner()
+    await _docker_run(upd, monkeypatch, r)
+    app = str(upd.app_dir())
+    build = next(a for a, _ in r.calls if a[:2] == ["docker", "compose"] and a[-1] == "build")
+    helper, helper_env = next((a, e) for a, e in r.calls if a[:3] == ["docker", "run", "-d"])
+    up = helper[helper.index(upd.DOCKER_CLI_IMAGE) + 1:]
+    assert _files(build) == ["docker-compose.yml", "docker-compose.update.yml"]
+    assert up[0] == "compose" and up[-2:] == ["up", "-d"]
+    assert _files(up) == ["docker-compose.yml", "docker-compose.update.yml"]
+    # project directory and name come from the checkout folder, same as the first start
+    assert helper[helper.index("-w") + 1] == app
+    # the helper receives what ${APP_DIR:?} and ${UPDATE_ADMIN_TOKEN:?} need, by name only
+    passed = {helper[i + 1] for i, a in enumerate(helper) if a == "-e"}
+    assert {"APP_DIR", "UPDATE_ADMIN_TOKEN", "GITHUB_TOKEN", "APP_VERSION"} <= passed
+    assert helper_env["APP_DIR"] == app and helper_env["UPDATE_ADMIN_TOKEN"] == "s3cret-admin"
+    build_env = next(e for a, e in r.calls if a == build)
+    assert build_env["APP_DIR"] == app and build_env["UPDATE_ADMIN_TOKEN"] == "s3cret-admin"
+
+
+@sync
+async def test_docker_update_never_logs_or_returns_secrets(upd, monkeypatch):
+    r = Runner()
+    job = await _docker_run(upd, monkeypatch, r)
+    secrets = ["s3cret-admin", "ghp_sekret-value"]
+    blob = json.dumps(job) + json.dumps(upd.get_job()) + "\n".join(job["log"])
+    for s in secrets:
+        assert s not in blob
+        assert not any(s in part for argv, _ in r.calls for part in argv)
+    assert any(line.startswith("$ docker run") for line in job["log"])
+
+
+@sync
+async def test_compose_files_come_from_the_environment_not_requests(upd, monkeypatch):
+    r = Runner()
+    await _docker_run(upd, monkeypatch, r, UPDATE_COMPOSE_FILES="docker-compose.yml, docker-compose.update.yml,docker-compose.local.yml")
+    build = next(a for a, _ in r.calls if a[:2] == ["docker", "compose"] and a[-1] == "build")
+    assert _files(build) == ["docker-compose.yml", "docker-compose.update.yml", "docker-compose.local.yml"]
+
+
+@sync
+async def test_bad_compose_file_names_stop_before_restart(upd, monkeypatch):
+    r = Runner()
+    job = await _docker_run(upd, monkeypatch, r, UPDATE_COMPOSE_FILES="docker-compose.yml,../evil.yml")
+    assert job["status"] == "failed" and "plain file names" in job["error"]
+    assert not any(a[:2] == ["docker", "run"] for a, _ in r.calls)
 
 
 @sync
