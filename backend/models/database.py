@@ -1,8 +1,14 @@
 import os
-from datetime import datetime
+from datetime import datetime, timezone
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 from sqlalchemy.orm import DeclarativeBase
+
+
+def utcnow() -> datetime:
+    """Naive UTC now, without the deprecated stdlib call."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
 
 DATABASE_PATH = os.environ.get("DATABASE_PATH", "./ytdlp_ui.db")
 DATABASE_URL = f"sqlite+aiosqlite:///{DATABASE_PATH}"
@@ -53,8 +59,8 @@ class JobModel(Base):
     eta = Column(Text)
     file_path = Column(Text)
     error = Column(Text)
-    created_at = Column(DateTime, default=datetime.utcnow)
-    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    created_at = Column(DateTime, default=utcnow)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow)
 
 
 class HistoryModel(Base):
@@ -66,7 +72,7 @@ class HistoryModel(Base):
     thumbnail = Column(Text)
     file_path = Column(Text)
     format_id = Column(Text)
-    finished_at = Column(DateTime, default=datetime.utcnow)
+    finished_at = Column(DateTime, default=utcnow)
 
 
 class ShareModel(Base):

@@ -147,3 +147,23 @@ def test_naive_utc_from_db_is_serialized_as_utc(client, backend, downloads_dir):
     assert file_json["modified"].endswith(("+00:00", "Z"))
     parsed = datetime.fromisoformat(file_json["modified"].replace("Z", "+00:00"))
     assert parsed == naive.replace(tzinfo=timezone.utc)
+
+
+def test_job_and_db_defaults_do_not_call_deprecated_utcnow(backend):
+    """Job and database column defaults must not call deprecated datetime.utcnow()."""
+    import warnings
+
+    from services.download_manager import Job
+    from models.database import JobModel, HistoryModel
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", DeprecationWarning)
+        job = Job("https://example.invalid/watch?v=abc", None)
+        for col in (
+            JobModel.__table__.c.created_at,
+            JobModel.__table__.c.updated_at,
+            HistoryModel.__table__.c.finished_at,
+        ):
+            value = col.default.arg(None)
+            assert value.tzinfo is None
+    assert job.created_at.tzinfo is None
