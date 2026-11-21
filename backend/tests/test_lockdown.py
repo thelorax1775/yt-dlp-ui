@@ -335,3 +335,99 @@ def test_ytdlp_path_accepts_an_absolute_path_to_an_executable_ytdlp(client, db, 
     assert response.status_code == 200, response.text
     assert stored(db, "ytdlp_path") == str(path)
     assert response.json()["ytdlp_version"] == "1.2.3"
+
+
+# ---- ffmpeg_path and cookies_file_path ----
+
+
+def _exe(path, mode=0o755):
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("#!/bin/sh\n")
+    path.chmod(mode)
+    return path
+
+
+def _current(client, field):
+    return client.get("/api/settings").json()[field]
+
+
+@pytest.mark.parametrize("value", ["/bin/sh", "relative/ffmpeg", "ffmpeg2", "/nonexistent/ffmpeg", "/tmp", ""])
+def test_ffmpeg_path_refuses_other_programs(client, backend, db, value):
+    before = _current(client, "ffmpeg_path")
+    response = client.post("/api/settings", json={"ffmpeg_path": value})
+    assert response.status_code == 422, response.text
+    assert _current(client, "ffmpeg_path") == before
+
+
+def test_ffmpeg_path_refuses_executable_with_another_name(client, backend):
+    path = _exe(backend.tmp_path / "bin" / "notffmpeg")
+    assert client.post("/api/settings", json={"ffmpeg_path": str(path)}).status_code == 422
+
+
+def test_ffmpeg_path_refuses_non_executable_file_and_empty_folder(client, backend):
+    plain = _exe(backend.tmp_path / "bin" / "ffmpeg", mode=0o644)
+    assert client.post("/api/settings", json={"ffmpeg_path": str(plain)}).status_code == 422
+    empty = backend.tmp_path / "empty"
+    empty.mkdir()
+    assert client.post("/api/settings", json={"ffmpeg_path": str(empty)}).status_code == 422
+
+
+def test_ffmpeg_path_accepts_bare_name_file_and_folder(client, backend):
+    assert client.post("/api/settings", json={"ffmpeg_path": "ffmpeg"}).status_code == 200
+    path = _exe(backend.tmp_path / "bin" / "ffmpeg-6")
+    response = client.post("/api/settings", json={"ffmpeg_path": str(path)})
+    assert response.status_code == 200, response.text
+    assert _current(client, "ffmpeg_path") == str(path)
+    folder = backend.tmp_path / "ffdir"
+    _exe(folder / "ffmpeg")
+    assert client.post("/api/settings", json={"ffmpeg_path": str(folder)}).status_code == 200
+    folder2 = backend.tmp_path / "ffdir2"
+    _exe(folder2 / "ffmpeg.exe")
+    assert client.post("/api/settings", json={"ffmpeg_path": str(folder2)}).status_code == 200
+
+
+def test_cookies_file_path_refuses_bad_values(client, backend):
+    inside = backend.db_path
+    for value in ["/etc/passwd", str(backend.tmp_path / "nope.txt"), "cookies.txt", str(inside), str(backend.tmp_path)]:
+        response = client.post("/api/settings", json={"cookies_file_path": value})
+        assert response.status_code == 422, (value, response.text)
+    assert _current(client, "cookies_file_path") is None
+
+
+def test_cookies_file_path_refuses_link_into_data_dir(client, backend):
+    link = backend.tmp_path / "link.txt"
+    link.symlink_to(backend.db_path)
+    assert client.post("/api/settings", json={"cookies_file_path": str(link)}).status_code == 422
+
+
+def test_cookies_file_path_accepts_a_cookies_file_and_empty_clears(client, backend):
+    f = backend.tmp_path / "c.txt"
+    f.write_text("# Netscape HTTP Cookie File\n")
+    response = client.post("/api/settings", json={"cookies_file_path": str(f)})
+    assert response.status_code == 200, response.text
+    assert _current(client, "cookies_file_path") == str(f)
+    response = client.post("/api/settings", json={"cookies_file_path": ""})
+    assert response.status_code == 200
+    assert _current(client, "cookies_file_path") is None
+
+
+def test_refused_ffmpeg_stores_nothing_else_from_the_request(client, backend):
+    before = _current(client, "download_folder")
+    folder = backend.tmp_path / "newdl"
+    folder.mkdir()
+    response = client.post(
+        "/api/settings", json={"download_folder": str(folder), "ffmpeg_path": "/bin/sh"}
+    )
+    assert response.status_code == 422
+    assert _current(client, "download_folder") == before
+
+
+def test_unchanged_ffmpeg_and_cookies_values_are_not_rechecked(client, db):
+    client.get("/api/settings")
+    db("UPDATE settings SET ffmpeg_path = '/bin/sh', cookies_file_path = '/etc/passwd'")
+    response = client.post(
+        "/api/settings",
+        json={"ffmpeg_path": "/bin/sh", "cookies_file_path": "/etc/passwd", "audio_format": "flac"},
+    )
+    assert response.status_code == 200, response.text
+    assert stored(db, "ffmpeg_path") == "/bin/sh"

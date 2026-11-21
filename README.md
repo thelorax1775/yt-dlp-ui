@@ -84,12 +84,18 @@ nothing from that request when one is refused):
   path to an existing executable file whose name starts with `yt-dlp`
   (`/usr/local/bin/yt-dlp`, `C:\tools\yt-dlp.exe`). Nothing else is ever
   started, also not for the version check.
+- `ffmpeg_path` must be the bare name `ffmpeg`, an absolute path to an existing
+  executable file whose name starts with `ffmpeg`, or an absolute path to an
+  existing folder that contains an executable `ffmpeg` (or `ffmpeg.exe`).
+- `cookies_file_path` must be empty (which clears it) or an absolute path to
+  an existing regular file whose content is in Netscape `cookies.txt` format.
+  Files inside the app data directory are refused: the managed `cookies.txt`
+  there is set through the cookies box (`cookies_content`), not this field.
 
 A value that is already stored is not re-checked when it is posted back
 unchanged, so an older setup keeps working until that value is edited.
 
-What these checks do **not** cover: `ffmpeg_path` and `cookies_file_path` are
-passed to yt-dlp as given; a visitor can still point downloads at any other
+What these checks do **not** cover: a visitor can still point downloads at any other
 folder the backend may write to; and someone able to place an executable
 named `yt-dlp…` on the machine can have it run. Network share input is checked separately, see
 [Network Shares](#network-shares-nfs--smb).
