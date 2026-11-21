@@ -167,6 +167,28 @@ class TestNormalizeChannel:
         with pytest.raises(ValueError):
             normalize_channel("not a handle!")
 
+    @pytest.mark.parametrize(
+        "lookalike",
+        [
+            "https://example.com/?youtube.com",
+            "https://notyoutube.com/@x",
+            "https://youtube.com.evil.example/@x",
+        ],
+    )
+    def test_rejects_lookalike_hosts(self, lookalike):
+        with pytest.raises(ValueError):
+            normalize_channel(lookalike)
+
+    def test_accepts_youtube_subdomains(self):
+        assert (
+            normalize_channel("https://m.youtube.com/@GarandThumb")
+            == "https://m.youtube.com/@GarandThumb"
+        )
+        assert (
+            normalize_channel("https://youtube.com/@GarandThumb")
+            == "https://youtube.com/@GarandThumb"
+        )
+
 
 class TestIsoDate:
     def test_valid_date(self):

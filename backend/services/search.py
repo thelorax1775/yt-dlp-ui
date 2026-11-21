@@ -3,6 +3,7 @@ import json
 import logging
 import re
 from typing import Optional
+from urllib.parse import urlsplit
 
 logger = logging.getLogger(__name__)
 
@@ -59,7 +60,15 @@ def normalize_channel(value: str) -> str:
     v = value.strip()
 
     if v.startswith(("http://", "https://")):
-        if "youtube.com" not in v and "youtu.be" not in v:
+        parsed = urlsplit(v)
+        hostname = parsed.hostname or ""
+        # hostname is already lowercased by urlsplit
+        is_youtube_host = (
+            hostname == "youtube.com"
+            or hostname.endswith(".youtube.com")
+            or hostname == "youtu.be"
+        )
+        if not is_youtube_host:
             raise ValueError(f"not a youtube channel URL: {value}")
         return v.rstrip("/")
 
