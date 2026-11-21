@@ -169,7 +169,7 @@ async def latest_version() -> dict:
 
 
 async def _latest_version_fresh() -> dict:
-    """Latest version without using cache. Used by start_update()."""
+    """Latest version without using cache. Used by check(fresh=True)."""
     global _cache_latest_version, _cache_latest_version_time
     if not _REPO_RE.match(REPO):
         raise ValueError("UPDATE_REPO is not owner/name")
@@ -238,7 +238,7 @@ async def _relation(installed: str, latest_sha: str) -> str:
     return result
 
 
-async def check() -> dict:
+async def check(fresh: bool = False) -> dict:
     installed = installed_version()
     out = {
         "installed": installed,
@@ -251,7 +251,10 @@ async def check() -> dict:
         "update_available": False,
     }
     try:
-        latest = await latest_version()
+        if fresh:
+            latest = await _latest_version_fresh()
+        else:
+            latest = await latest_version()
     except PermissionError:
         out["state"] = "unreachable"
         out["message"] = (
@@ -432,16 +435,33 @@ async def _job_main(target: str) -> None:
         for argv, env in _apply_steps(m, d, target):
             await _run(argv, d, env)
     except StepFailed as e:
+        _job["status"], _job["error"] = "failed", str(e)
+        _log(f"FAILED: {e}")
         if prev:
-            _log(f"Rolling back to {prev[:7]}; the old version keeps running.")
-            await _run(["git", "checkout", "--quiet", "--detach", prev], d)
-        _job["status"] = "failed"
-        _job["error"] = str(e)
+            await _rollback(m, d, prev)
         _save()
-        return
-    _job["status"] = "restarting"
-    _job["log"].append(f"Update to {target} complete; restarting services.")
-    _save()
+    except Exception as e:  # never leave the job 'running'
+        _job["status"], _job["error"] = "failed", f"unexpected error ({type(e).__name__})"
+        _log(f"FAILED: {_job['error']}")
+        if prev:
+            await _rollback(m, d, prev)
+        _save()
+    else:
+        if _job["status"] == "restarting" and installed_version() == target:
+            _job["status"] = "succeeded"
+        _save()
+
+
+async def _rollback(m: str | None, d: Path, prev: str) -> None:
+    """Return the checkout to the old commit; the old version never stopped."""
+    _log(f"Rolling back to {prev[:7]}; the old version keeps running.")
+    try:
+        await _run(["git", "checkout", "--quiet", "--detach", prev], d)
+        if m == "systemd":
+            for argv, env in _build_steps(m, d, prev):
+                await _run(argv, d, env)
+    except StepFailed as e:
+        _log(f"Rollback step failed: {e}")
 
 
 async def start_update() -> dict:
@@ -463,36 +483,20 @@ async def start_update() -> dict:
         cur = get_job()
         if cur and cur["status"] in ("running", "restarting") and _task and not _task.done():
             raise RuntimeError("busy")
-        # Bypass cache by using _latest_version_fresh() directly
-        try:
-            latest = await _latest_version_fresh()
-        except PermissionError:
-            raise ConnectionError(
-                "Cannot reach GitHub: access refused. Set GITHUB_TOKEN on the backend "
-                "if the repository is private."
-                if not os.environ.get("GITHUB_TOKEN")
-                else "Cannot reach GitHub: the configured GITHUB_TOKEN was refused."
-            )
-        except LookupError as e:
-            if str(e) == "rate_limit":
-                raise ConnectionError(
-                    "GitHub's request limit is used up; try again later or set GITHUB_TOKEN on the backend."
-                )
-            raise ConnectionError(f"Cannot reach GitHub ({type(e).__name__}).")
-        except (httpx.HTTPError, ValueError) as e:
-            raise ConnectionError(f"Cannot reach GitHub ({type(e).__name__}).")
-
-        installed = installed_version()
-        if installed == latest["sha"]:
+        # Use check(fresh=True) to bypass cache and get fresh GitHub data
+        info = await check(fresh=True)
+        if info["state"] == "unreachable" or not info["latest"]:
+            raise ConnectionError(info["message"])
+        if not info["update_available"]:
             raise RuntimeError("up_to_date")
-        target = latest["sha"]
+        target = info["latest"]["sha"]
         _job = {
             "status": "running",
             "target": target,
-            "from": installed,
+            "from": info["installed"],
             "started_at": time.time(),
             "error": None,
-            "log": [f"Updating {installed[:7]} -> {target[:7]} ({mode()})"],
+            "log": [f"Updating {info['installed'][:7]} -> {target[:7]} ({mode()})"],
         }
         _save()
         _task = asyncio.create_task(_job_main(target))
