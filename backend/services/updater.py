@@ -33,6 +33,9 @@ MAX_LOG_LINES = 400
 # Tests replace this to avoid the network.
 _transport: httpx.AsyncBaseTransport | None = None
 
+# Lock to prevent concurrent start_update calls during the "starting" phase
+_start_update_lock = asyncio.Lock()
+
 
 def mode() -> str | None:
     value = os.environ.get("UPDATE_MODE", "").strip().lower()
@@ -68,10 +71,35 @@ def installed_version() -> str:
             ref = head[5:]
             if ".." in ref:
                 return "unknown"
-            head = (git / ref).read_text().strip()
+            # Try loose ref first
+            loose_ref = git / ref
+            if loose_ref.exists():
+                head = loose_ref.read_text().strip()
+            else:
+                # Fall back to packed-refs
+                head = _read_packed_ref(git, ref)
         return head if _SHA.match(head) else "unknown"
     except OSError:
         return "unknown"
+
+
+def _read_packed_ref(git: Path, ref: str) -> str:
+    """Read a ref from .git/packed-refs. Returns empty string if not found."""
+    packed = git / "packed-refs"
+    if not packed.exists():
+        return ""
+    try:
+        for line in packed.read_text().splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or line.startswith("^"):
+                continue
+            # Format: <sha> <refname>
+            parts = line.split(" ", 1)
+            if len(parts) == 2 and parts[1] == ref:
+                return parts[0]
+    except OSError:
+        pass
+    return ""
 
 
 def compare_versions(installed: str, latest: str) -> str:
@@ -344,23 +372,27 @@ async def start_update() -> dict:
     global _job, _task
     if not mode():
         raise RuntimeError("not_configured")
-    cur = get_job()
-    if cur and cur["status"] in ("running", "restarting") and _task and not _task.done():
-        raise RuntimeError("busy")
-    info = await check()
-    if info["state"] == "unreachable" or not info["latest"]:
-        raise ConnectionError(info["message"])
-    if not info["update_available"]:
-        raise RuntimeError("up_to_date")
-    target = info["latest"]["sha"]
-    _job = {
-        "status": "running",
-        "target": target,
-        "from": info["installed"],
-        "started_at": time.time(),
-        "error": None,
-        "log": [f"Updating {info['installed'][:7]} -> {target[:7]} ({mode()})"],
-    }
-    _save()
-    _task = asyncio.create_task(_job_main(target))
-    return _job
+    
+    # Use a lock to prevent two concurrent callers from both passing the busy check
+    # while the first is still awaiting check().
+    async with _start_update_lock:
+        cur = get_job()
+        if cur and cur["status"] in ("running", "restarting") and _task and not _task.done():
+            raise RuntimeError("busy")
+        info = await check()
+        if info["state"] == "unreachable" or not info["latest"]:
+            raise ConnectionError(info["message"])
+        if not info["update_available"]:
+            raise RuntimeError("up_to_date")
+        target = info["latest"]["sha"]
+        _job = {
+            "status": "running",
+            "target": target,
+            "from": info["installed"],
+            "started_at": time.time(),
+            "error": None,
+            "log": [f"Updating {info['installed'][:7]} -> {target[:7]} ({mode()})"],
+        }
+        _save()
+        _task = asyncio.create_task(_job_main(target))
+        return _job
