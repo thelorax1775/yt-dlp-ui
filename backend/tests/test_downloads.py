@@ -80,8 +80,10 @@ def test_progress_with_na_percent_keeps_previous_progress(
     backend, client, downloads_dir, wait_for_job
 ):
     # An unknown total size (HLS/live) is reported as "N/A%".
+    # First line has different speed/ETA so we can tell whether the N/A
+    # line was parsed (updates speed/ETA) or skipped (keeps old values).
     backend.subprocess.download_lines = [
-        "PROGRESS downloading  42.0% 1.00MiB/s 00:10",
+        "PROGRESS downloading  42.0% 3.00MiB/s 00:20",
         "PROGRESS downloading  N/A% 1.00MiB/s 00:10",
     ]
     backend.subprocess.download_returncode = 1
