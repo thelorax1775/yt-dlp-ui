@@ -9,7 +9,13 @@ from services.cookies import (
     validate_cookies_content,
     write_cookies_file,
 )
-from services.settings_guard import SettingsError, validate_folder, validate_ytdlp_path
+from services.settings_guard import (
+    SettingsError,
+    validate_cookies_file_path,
+    validate_ffmpeg_path,
+    validate_folder,
+    validate_ytdlp_path,
+)
 
 router = APIRouter()
 
@@ -94,6 +100,16 @@ async def update_settings(update: SettingsUpdate):
                 if value != row.ytdlp_path:
                     value = validate_ytdlp_path(value)
                 data["ytdlp_path"] = value
+            if data.get("ffmpeg_path") is not None:
+                value = data["ffmpeg_path"].strip()
+                if value != row.ffmpeg_path:
+                    value = validate_ffmpeg_path(value)
+                data["ffmpeg_path"] = value
+            if data.get("cookies_file_path"):
+                value = data["cookies_file_path"].strip()
+                if value and value != row.cookies_file_path:
+                    value = validate_cookies_file_path(value)
+                data["cookies_file_path"] = value
         except SettingsError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
 
