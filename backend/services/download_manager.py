@@ -31,7 +31,7 @@ PROGRESS_TEMPLATE = (
 )
 
 PROGRESS_RE = re.compile(
-    r"^PROGRESS\s+(\S+)\s+([\d.]+)%\s+(\S+)\s+(\S+)\s*$"
+    r"^PROGRESS\s+(\S+)\s+(N/A|[\d.]+)%\s+(.+?)\s+(\S+)\s*$"
 )
 
 # yt-dlp prints the final merged/destination path with these markers.
@@ -297,7 +297,9 @@ class DownloadManager:
 
     def _build_args(self, job: Job, settings: SettingsModel) -> list[str]:
         folder = self._target_folder(job, settings)
-        output_template = os.path.join(folder, "%(title)s.%(ext)s")
+        # Escape any "%" in the folder so yt-dlp doesn't treat it as a template.
+        safe_folder = folder.replace("%", "%%")
+        output_template = os.path.join(safe_folder, "%(title)s.%(ext)s")
         args = [
             settings.ytdlp_path,
             "--no-playlist",
@@ -425,11 +427,19 @@ class DownloadManager:
             m = PROGRESS_RE.match(line)
             if m:
                 status, percent, speed, eta = m.groups()
-                job.progress = float(percent)
-                job.speed = speed if speed not in ("NA", "Unknown") else None
+                if percent != "N/A":
+                    job.progress = float(percent)
+                speed = speed.strip()
+                job.speed = (
+                    None if speed in ("NA", "N/A", "Unknown", "Unknown B/s") else speed
+                )
                 job.eta = eta if eta not in ("NA", "Unknown") else None
                 job.updated_at = utcnow()
                 await self._broadcast(job)
+                continue
+
+            # Progress ticks are not output worth surfacing as an error later.
+            if line.startswith("PROGRESS"):
                 continue
 
             if line.strip():

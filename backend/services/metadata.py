@@ -158,7 +158,7 @@ async def fetch_metadata(url: str) -> MetadataResponse:
     ]
 
     return MetadataResponse(
-        title=raw.get("title", "Unknown"),
+        title=raw.get("title") or "Unknown",
         thumbnail=raw.get("thumbnail"),
         uploader=raw.get("uploader") or raw.get("channel"),
         duration=raw.get("duration"),
