@@ -1,5 +1,5 @@
-from fastapi import APIRouter
-from sqlalchemy import select
+from fastapi import APIRouter, HTTPException
+from sqlalchemy import delete, func, select
 
 from models.database import AsyncSessionLocal, HistoryModel
 from models.schemas import HistoryEntry
@@ -26,3 +26,24 @@ async def get_history():
             )
             for r in rows
         ]
+
+
+@router.delete("/history/{entry_id}")
+async def delete_history_entry(entry_id: str):
+    async with AsyncSessionLocal() as session:
+        row = await session.get(HistoryModel, entry_id)
+        if row is None:
+            raise HTTPException(status_code=404, detail="History entry not found")
+        await session.delete(row)
+        await session.commit()
+    return {"status": "deleted", "id": entry_id}
+
+
+@router.delete("/history")
+async def clear_history():
+    async with AsyncSessionLocal() as session:
+        count_result = await session.execute(select(func.count()).select_from(HistoryModel))
+        count = count_result.scalar_one()
+        await session.execute(delete(HistoryModel))
+        await session.commit()
+    return {"status": "cleared", "count": count}

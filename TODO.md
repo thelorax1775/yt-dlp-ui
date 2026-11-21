@@ -31,7 +31,7 @@ The current build is a working MVP. Below is what's done and what could come nex
       the complete `formats` list (codecs/fps/size) as a selectable table
 - [ ] **Live concurrency change** — resize the worker pool without a restart
 - [ ] **Pause/resume** downloads
-- [ ] **Clear history** / delete individual history entries + delete file option
+- [ ] **Delete file option** for history entries (deleting and clearing history entries is done: `DELETE /api/history/{id}`, `DELETE /api/history`)
 - [ ] **Per-job logs** — capture and surface full yt-dlp output for debugging
 - [ ] **Disk space / quota** indicator on the Downloads page
 
