@@ -374,3 +374,65 @@ def test_link_whose_target_is_gone_is_listed_and_can_be_deleted(client, tree):
     assert "dangling.mp4" in names
     assert response.status_code == 200
     assert not os.path.lexists(tree / "dangling.mp4")
+
+
+# ---- bad inputs get a clear 400/404, not a 500 or a silent success ----
+
+
+def test_list_missing_folder_is_404(client, tree):
+    response = client.get("/api/files", params={"path": "nope/nope"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Folder not found"
+
+
+def test_list_of_an_existing_file_is_404(client, tree):
+    response = client.get("/api/files", params={"path": "clip.mp4"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Folder not found"
+
+
+def test_list_root_when_download_folder_does_not_exist_is_200_empty(client, tmp_path):
+    missing = tmp_path / "fresh-downloads"
+    response = client.post("/api/settings", json={"download_folder": str(missing)})
+    assert response.status_code == 200, response.text
+
+    listing = client.get("/api/files")
+
+    assert listing.status_code == 200
+    assert listing.json()["entries"] == []
+
+
+def test_mkdir_with_missing_parent_is_404_and_creates_nothing(client, tree):
+    response = client.post("/api/files/mkdir", json={"path": "no/such/parent", "name": "sub"})
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Folder not found"
+    assert not (tree / "no").exists()
+
+
+def test_mkdir_with_a_file_as_parent_is_400(client, tree):
+    response = client.post("/api/files/mkdir", json={"path": "clip.mp4", "name": "sub"})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "Not a folder"
+    assert (tree / "clip.mp4").is_file()
+
+
+def test_rename_to_a_too_long_name_is_400_and_keeps_the_file(client, tree):
+    response = client.post(
+        "/api/files/rename", json={"path": "clip.mp4", "new_name": "n" * 300}
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "File name too long"
+    assert (tree / "clip.mp4").read_bytes() == b"video-bytes"
+
+
+def test_mkdir_with_a_too_long_name_is_400_and_creates_nothing(client, tree):
+    response = client.post("/api/files/mkdir", json={"path": "", "name": "n" * 300})
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == "File name too long"
+    assert sorted(p.name for p in tree.iterdir()) == ["Music", "clip.mp4"]

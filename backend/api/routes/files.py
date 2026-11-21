@@ -1,3 +1,4 @@
+import errno
 import os
 
 from fastapi import APIRouter, HTTPException, Query
@@ -20,6 +21,8 @@ async def list_files(path: str = Query("", description="Path relative to downloa
         return await files_manager.list_dir(path)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Folder not found")
 
 
 @router.delete("/files")
@@ -41,6 +44,10 @@ async def rename_file(req: RenameRequest):
         raise HTTPException(status_code=400, detail=str(exc))
     except FileNotFoundError:
         raise HTTPException(status_code=404, detail="File not found")
+    except OSError as exc:
+        if exc.errno == errno.ENAMETOOLONG:
+            raise HTTPException(status_code=400, detail="File name too long")
+        raise
 
 
 @router.post("/files/mkdir", response_model=FileEntry)
@@ -49,8 +56,14 @@ async def make_dir(req: MkdirRequest):
         return await files_manager.make_dir(req.path, req.name)
     except FileExistsError:
         raise HTTPException(status_code=400, detail="Folder already exists")
+    except FileNotFoundError:
+        raise HTTPException(status_code=404, detail="Folder not found")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
+    except OSError as exc:
+        if exc.errno == errno.ENAMETOOLONG:
+            raise HTTPException(status_code=400, detail="File name too long")
+        raise
 
 
 @router.get("/files/download")
