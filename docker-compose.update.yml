@@ -13,6 +13,10 @@ services:
     environment:
       - UPDATE_MODE=docker
       - UPDATE_APP_DIR=${APP_DIR}
+      # The files the updater passes to `docker compose` when it rebuilds and
+      # restarts, so this override survives an update. List any extra override
+      # file you also use here, in order, and start the stack with the same -f list.
+      - UPDATE_COMPOSE_FILES=docker-compose.yml,docker-compose.update.yml
       - UPDATE_ADMIN_TOKEN=${UPDATE_ADMIN_TOKEN:?set UPDATE_ADMIN_TOKEN}
       # Optional, for a private repository (read access to contents).
       - GITHUB_TOKEN=${GITHUB_TOKEN:-}
