@@ -401,7 +401,7 @@ changes; check out the exact commit GitHub reported (nothing from the request
 chooses the version); build (`docker compose build`, or `pip install` + `npm ci`
 + `npm run build`); only then restart. If any step fails, the checkout goes back
 to the old commit and the old version keeps running. The database, `data/`,
-downloads and settings are never touched.
+downloads and settings are never touched. On systemd the build runs in place (the live `backend/venv` and `frontend/.next`), so a failed build can leave them partly updated; rerun the manual fallback below to repair.
 
 Enable it with environment variables on the backend:
 
@@ -429,8 +429,7 @@ Enable it with environment variables on the backend:
   never appear in the job log or the status endpoint.
 - **systemd:** set `UPDATE_MODE=systemd` and the variables above in
   `ytdlp-backend.service`, and allow the service user to run
-  `systemctl restart ytdlp-backend ytdlp-frontend` (a sudoers rule or polkit
-  rule; the units are named as in [Deployment](#option-b--bare-metal-systemd--nginx)).
+  `systemctl restart ytdlp-backend ytdlp-frontend` (a polkit rule: the updater runs `systemctl` without `sudo`, so a sudoers rule does not help; the units are named as in [Deployment](#option-b--bare-metal-systemd--nginx)).
   Run the update commands as the user that owns the checkout.
 
 **Manual fallback** (always works): `git pull`, then
