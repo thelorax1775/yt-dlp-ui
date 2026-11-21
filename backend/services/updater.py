@@ -372,7 +372,14 @@ async def start_update() -> dict:
     global _job, _task
     if not mode():
         raise RuntimeError("not_configured")
-    
+
+    # Fast-path: if another caller is already in the critical section (between
+    # the busy check and the GitHub requests), reject immediately with 409.
+    # This also avoids the "Lock is bound to a different event loop" error that
+    # can happen when tests run in separate asyncio.run() loops.
+    if _start_update_lock.locked():
+        raise RuntimeError("busy")
+
     # Use a lock to prevent two concurrent callers from both passing the busy check
     # while the first is still awaiting check().
     async with _start_update_lock:

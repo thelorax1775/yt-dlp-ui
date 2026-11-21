@@ -14,7 +14,7 @@ CMP = {f"/repos/thelorax1775/yt-dlp-ui/compare/{OLD}...{NEW}": (200, {"status": 
 
 class SlowRunner:
     """Runner that makes the background job stay in 'running' state."""
-    
+
     def __init__(self, fail_on=None, dirty=False):
         self.calls, self.fail_on, self.dirty = [], fail_on, dirty
         self._job_started = asyncio.Event()
@@ -73,21 +73,15 @@ async def test_two_concurrent_start_update_calls_only_one_job(upd, monkeypatch):
     monkeypatch.setattr(upd, "_transport", SlowTransport())
     upd._job = upd._task = None
 
-    # Start first call, wait for it to begin the checkout (job is running)
-    first_task = asyncio.create_task(upd.start_update())
-    await r._job_started.wait()
-    # Now start second call - it should get "busy" because first job is running
-    second_task = asyncio.create_task(upd.start_update())
-    
-    # Release the first job to complete
-    await r.release()
-    
-    a, b = await asyncio.gather(first_task, second_task, return_exceptions=True)
+    # Start BOTH calls concurrently while the first is still in check()
+    # This tests the race condition: both callers enter start_update() at the same time
+    a, b = await asyncio.gather(upd.start_update(), upd.start_update(), return_exceptions=True)
 
-    # One should succeed, one should raise RuntimeError("busy")
-    checkouts = [c for c in r.text() if f"checkout --quiet --detach {NEW}" in c]
+    # Release the job if it got that far
+    await r.release()
 
     # Exactly one checkout should happen
+    checkouts = [c for c in r.text() if f"checkout --quiet --detach {NEW}" in c]
     assert len(checkouts) == 1, f"Expected 1 checkout, got {len(checkouts)}: {checkouts}"
 
     # One result should be the job dict, the other should be RuntimeError("busy")
@@ -98,8 +92,14 @@ async def test_two_concurrent_start_update_calls_only_one_job(upd, monkeypatch):
 
 
 @sync
-async def test_post_update_while_starting_returns_409(client, upd, monkeypatch):
-    """POST /api/update while a job is starting should return 409."""
+async def test_post_update_while_starting_returns_409(backend, upd, monkeypatch):
+    """POST /api/update while a job is starting should return 409.
+
+    Uses httpx.AsyncClient with ASGITransport so both requests run on the
+    same event loop (the pytest loop), avoiding the TestClient's separate thread.
+    """
+    from httpx import ASGITransport, AsyncClient
+
     # Make the GitHub check slow
     async def slow(request):
         await asyncio.sleep(0.2)
@@ -110,33 +110,34 @@ async def test_post_update_while_starting_returns_409(client, upd, monkeypatch):
         async def handle_async_request(self, request):
             return await slow(request)
 
-    monkeypatch.setattr(upd, "_transport", SlowTransport())
     r = SlowRunner()
     monkeypatch.setattr(asyncio, "create_subprocess_exec", r)
+    monkeypatch.setattr(upd, "_transport", SlowTransport())
     upd._job = upd._task = None
 
-    # Start the first update in the background (it will be slow due to GitHub)
-    first_task = asyncio.create_task(upd.start_update())
-    
-    # Give the first call time to pass the busy check and start the GitHub request
-    await asyncio.sleep(0.05)
+    # Use AsyncClient with ASGITransport to run on the same event loop
+    transport = ASGITransport(app=backend.app)
+    async with AsyncClient(transport=transport, base_url="http://test") as ac:
+        # Start the first update in the background (it will be slow due to GitHub)
+        first_task = asyncio.create_task(upd.start_update())
 
-    # Now try to call start_update directly (simulating a second API call)
-    # The second call should get "busy" because the first update is still "starting"
-    second_task = asyncio.create_task(upd.start_update())
-    
-    # Wait for the first task to reach the checkout phase
-    await r._job_started.wait()
-    # Release it
-    await r.release()
-    
-    a, b = await asyncio.gather(first_task, second_task, return_exceptions=True)
+        # Give the first call time to pass the busy check and start the GitHub request
+        await asyncio.sleep(0.05)
 
-    # The first should succeed, the second should get RuntimeError("busy")
-    successes = [x for x in (a, b) if not isinstance(x, Exception)]
-    errors = [x for x in (a, b) if isinstance(x, RuntimeError) and "busy" in str(x)]
-    assert len(successes) == 1, f"Expected 1 success, got {len(successes)}"
-    assert len(errors) == 1, f"Expected 1 busy error, got {len(errors)}: {errors}"
+        # Now make a real POST /api/update request through the app
+        # It should get 409 because the first update is still "starting"
+        response = await ac.post("/api/update", headers={"X-Admin-Token": "s3cret-admin"})
+
+        # Release the first job to complete
+        await r._job_started.wait()
+        await r.release()
+
+        # Wait for the first task to complete
+        await first_task
+
+    # The second POST should return 409 with the "already running" message
+    assert response.status_code == 409, f"Expected 409, got {response.status_code}: {response.text}"
+    assert "An update is already running" in response.json()["detail"]
 
 
 # ---- Packed refs tests ----
@@ -173,7 +174,11 @@ def test_installed_version_with_packed_refs(upd, monkeypatch, tmp_path):
 
 
 def test_installed_version_missing_from_both_returns_unknown(upd, monkeypatch, tmp_path):
-    """When the ref is missing from both loose and packed-refs, return 'unknown'."""
+    """When the ref is missing from both loose and packed-refs, return 'unknown'.
+
+    This is a regression guard - main already returns 'unknown' in this case.
+    It passes on both main and the fix branch.
+    """
     monkeypatch.delenv("APP_VERSION", raising=False)
     d = tmp_path / "repo"
     d.mkdir()
