@@ -151,7 +151,7 @@ nginx.conf         # example reverse proxy
 | POST   | `/api/settings`          | Update settings (any subset of fields) |
 | GET    | `/api/shares`            | List network shares (+ mount state) |
 | POST   | `/api/shares`            | Add a network share               |
-| DELETE | `/api/shares/{id}`       | Remove a share (unmounts first)   |
+| DELETE | `/api/shares/{id}`       | Remove a share (unmounts first; 409 if it stays mounted) |
 | POST   | `/api/shares/{id}/mount` | Mount a share                     |
 | POST   | `/api/shares/{id}/unmount` | Unmount a share                 |
 | GET    | `/api/update/check`      | Installed vs newest GitHub version |

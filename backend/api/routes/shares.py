@@ -1,3 +1,5 @@
+import os
+
 from fastapi import APIRouter, HTTPException
 from sqlalchemy import select
 
@@ -42,6 +44,14 @@ async def create_share(share: ShareCreate):
             share_guard.validate_mount_point(share.mount_point, folders=folders)
         except share_guard.ShareError as exc:
             raise HTTPException(status_code=422, detail=str(exc))
+        result = await session.execute(select(ShareModel))
+        if any(
+            os.path.normpath(str(r.mount_point)) == os.path.normpath(share.mount_point)
+            for r in result.scalars().all()
+        ):
+            raise HTTPException(
+                status_code=409, detail="Another share already uses this mount point"
+            )
         row = ShareModel(
             name=share.name,
             type=share.type,
@@ -65,8 +75,17 @@ async def delete_share(share_id: int):
         row = await session.get(ShareModel, share_id)
         if row is None:
             raise HTTPException(status_code=404, detail="Share not found")
-        # best-effort unmount before removing
-        await share_manager.unmount_share(row.mount_point)
+        # Unmount before removing, but keep the row if the mount is still active.
+        _ok, message = await share_manager.unmount_share(row.mount_point)
+        # A stored unsafe mount point is refused before any umount is attempted;
+        # preserve the existing behavior of removing that stale database row.
+        if (
+            not message.startswith("Refusing to unmount:")
+            and share_manager.is_mounted(str(row.mount_point))
+        ):
+            raise HTTPException(
+                status_code=409, detail=f"Share is still mounted: {message}"
+            )
         await session.delete(row)
         await session.commit()
     return {"status": "deleted", "id": share_id}

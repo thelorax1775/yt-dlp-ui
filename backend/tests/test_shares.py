@@ -140,6 +140,34 @@ def test_share_api_reports_mount_failure(client, backend):
     assert response.json() == {"mounted": False, "message": "mount.nfs: access denied by server"}
 
 
+def test_delete_share_keeps_row_when_unmount_fails(client, backend, monkeypatch):
+    share = _post(client, backend).json()
+    backend.subprocess.mount_returncode = 32
+    backend.subprocess.mount_output = b"umount: target is busy"
+    monkeypatch.setattr(backend.share_manager, "is_mounted", lambda _mp: True)
+
+    response = client.delete(f"/api/shares/{share['id']}")
+
+    assert response.status_code == 409
+    assert "target is busy" in response.json()["detail"]
+    assert [row["id"] for row in client.get("/api/shares").json()] == [share["id"]]
+
+
+def test_duplicate_mount_point_rejected(client, backend):
+    mount_point = str(backend.tmp_path / "mnt" / "media")
+    first = _post(client, backend, mount_point=mount_point)
+    duplicate = _post(client, backend, mount_point=mount_point)
+    duplicate_with_slash = _post(client, backend, mount_point=mount_point + "/")
+    different = _post(client, backend, mount_point=str(backend.tmp_path / "mnt" / "other"))
+
+    assert first.status_code == 200
+    assert duplicate.status_code == 409
+    assert duplicate.json()["detail"] == "Another share already uses this mount point"
+    assert duplicate_with_slash.status_code == 409
+    assert different.status_code == 200
+    assert len(client.get("/api/shares").json()) == 2
+
+
 def test_share_api_rejects_unknown_type_and_unknown_id(client, backend):
     bad_type = client.post(
         "/api/shares",
