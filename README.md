@@ -393,6 +393,9 @@ or when updating is not enabled on the install. **Update** asks for the admin
 token, then runs as a background job; the card polls its log and the app
 restarts when the new version is ready.
 
+The version check is cached for 10 minutes to avoid exhausting GitHub's
+unauthenticated request limit.
+
 How it works, in order: `git fetch`; refuse if tracked files have local
 changes; check out the exact commit GitHub reported (nothing from the request
 chooses the version); build (`docker compose build`, or `pip install` + `npm ci`

@@ -35,7 +35,7 @@ def upd(backend, monkeypatch):
 
 
 def github(monkeypatch, upd, routes):
-    """routes: path -> (status, json) or an exception instance."""
+    """routes: path -> (status, json) or (status, json, headers) or an exception instance."""
     seen = []
 
     def handler(request: httpx.Request):
@@ -45,6 +45,8 @@ def github(monkeypatch, upd, routes):
             raise r
         if r is None:
             return httpx.Response(404, json={})
+        if len(r) == 3:
+            return httpx.Response(r[0], json=r[1], headers=r[2])
         return httpx.Response(r[0], json=r[1])
 
     monkeypatch.setattr(upd, "_transport", httpx.MockTransport(handler))

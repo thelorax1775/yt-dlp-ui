@@ -29,12 +29,35 @@ SYSTEMD_UNITS = ("ytdlp-backend", "ytdlp-frontend")
 DOCKER_CLI_IMAGE = "docker:27-cli"
 STEP_TIMEOUT = 1800
 MAX_LOG_LINES = 400
+CHECK_CACHE_SECONDS = 600
 
 # Tests replace this to avoid the network.
 _transport: httpx.AsyncBaseTransport | None = None
 
 # Lock to prevent concurrent start_update calls during the "starting" phase
 _start_update_lock = asyncio.Lock()
+
+# Cache for latest_version()
+_cache_latest_version: dict | None = None
+_cache_latest_version_time: float = 0.0
+
+
+def _cache_clear() -> None:
+    """Clear the latest_version cache. For tests."""
+    global _cache_latest_version, _cache_latest_version_time
+    _cache_latest_version = None
+    _cache_latest_version_time = 0.0
+
+
+def _is_rate_limit_response(r: httpx.Response) -> bool:
+    """Check if response indicates GitHub rate limit exceeded."""
+    if r.status_code == 429:
+        return True
+    if r.status_code == 403:
+        remaining = r.headers.get("x-ratelimit-remaining")
+        if remaining is not None and remaining == "0":
+            return True
+    return False
 
 
 def mode() -> str | None:
@@ -129,22 +152,53 @@ async def _get(path: str):
 
 async def latest_version() -> dict:
     """Newest release (tag + commit) or, with no releases, the default branch head."""
+    global _cache_latest_version, _cache_latest_version_time
     if not _REPO_RE.match(REPO):
         raise ValueError("UPDATE_REPO is not owner/name")
+    
+    # Check cache
+    now = time.monotonic()
+    if _cache_latest_version is not None and (now - _cache_latest_version_time) < CHECK_CACHE_SECONDS:
+        return _cache_latest_version
+    
+    return await _latest_version_fresh()
+
+
+async def _latest_version_fresh() -> dict:
+    """Latest version without using cache. Used by start_update()."""
+    global _cache_latest_version, _cache_latest_version_time
+    if not _REPO_RE.match(REPO):
+        raise ValueError("UPDATE_REPO is not owner/name")
+    
     r = await _get(f"/repos/{REPO}/releases/latest")
+    # Check for rate limit on any response
+    if _is_rate_limit_response(r):
+        raise LookupError("rate_limit")
     if r.status_code == 200:
         tag = str(r.json().get("tag_name") or "")
         c = await _get(f"/repos/{REPO}/commits/{quote(tag, safe='')}")
+        if _is_rate_limit_response(c):
+            raise LookupError("rate_limit")
         if c.status_code == 200 and _SHA.match(str(c.json().get("sha", ""))):
-            return {"kind": "release", "label": tag, "sha": c.json()["sha"]}
+            result = {"kind": "release", "label": tag, "sha": c.json()["sha"]}
+            # Cache successful result
+            _cache_latest_version = result
+            _cache_latest_version_time = time.monotonic()
+            return result
         raise LookupError(f"could not resolve release {tag!r}")
     if r.status_code in (401, 403, 404):
         if r.status_code != 404:
             raise PermissionError(r.status_code)
         c = await _get(f"/repos/{REPO}/commits/HEAD")
+        if _is_rate_limit_response(c):
+            raise LookupError("rate_limit")
         if c.status_code == 200 and _SHA.match(str(c.json().get("sha", ""))):
             sha = c.json()["sha"]
-            return {"kind": "branch", "label": sha[:7], "sha": sha}
+            result = {"kind": "branch", "label": sha[:7], "sha": sha}
+            # Cache successful result
+            _cache_latest_version = result
+            _cache_latest_version_time = time.monotonic()
+            return result
         if c.status_code in (401, 403, 404):
             raise PermissionError(c.status_code)
     raise LookupError(f"GitHub answered {r.status_code}")
@@ -188,7 +242,17 @@ async def check() -> dict:
             else "Cannot reach GitHub: the configured GITHUB_TOKEN was refused."
         )
         return out
-    except (httpx.HTTPError, LookupError, ValueError) as e:
+    except LookupError as e:
+        if str(e) == "rate_limit":
+            out["state"] = "unreachable"
+            out["message"] = (
+                "GitHub's request limit is used up; try again later or set GITHUB_TOKEN on the backend."
+            )
+            return out
+        out["state"] = "unreachable"
+        out["message"] = f"Cannot reach GitHub ({type(e).__name__})."
+        return out
+    except (httpx.HTTPError, ValueError) as e:
         out["state"] = "unreachable"
         out["message"] = f"Cannot reach GitHub ({type(e).__name__})."
         return out
@@ -386,19 +450,40 @@ async def start_update() -> dict:
         cur = get_job()
         if cur and cur["status"] in ("running", "restarting") and _task and not _task.done():
             raise RuntimeError("busy")
-        info = await check()
-        if info["state"] == "unreachable" or not info["latest"]:
-            raise ConnectionError(info["message"])
-        if not info["update_available"]:
+        # Use fresh lookup for the update target - bypass cache
+        installed = installed_version()
+        try:
+            latest = await _latest_version_fresh()
+        except PermissionError:
+            raise ConnectionError(
+                "Cannot reach GitHub: access refused. Set GITHUB_TOKEN on the backend "
+                "if the repository is private."
+                if not os.environ.get("GITHUB_TOKEN")
+                else "Cannot reach GitHub: the configured GITHUB_TOKEN was refused."
+            )
+        except LookupError as e:
+            if str(e) == "rate_limit":
+                raise ConnectionError(
+                    "GitHub's request limit is used up; try again later or set GITHUB_TOKEN on the backend."
+                )
+            raise ConnectionError(f"Cannot reach GitHub ({type(e).__name__}).")
+        except (httpx.HTTPError, ValueError) as e:
+            raise ConnectionError(f"Cannot reach GitHub ({type(e).__name__}).")
+
+        rel = await _relation(installed, latest["sha"])
+        if rel == "equal":
             raise RuntimeError("up_to_date")
-        target = info["latest"]["sha"]
+        if rel not in ("older", "diverged"):
+            raise RuntimeError("up_to_date")
+
+        target = latest["sha"]
         _job = {
             "status": "running",
             "target": target,
-            "from": info["installed"],
+            "from": installed,
             "started_at": time.time(),
             "error": None,
-            "log": [f"Updating {info['installed'][:7]} -> {target[:7]} ({mode()})"],
+            "log": [f"Updating {installed[:7]} -> {target[:7]} ({mode()})"],
         }
         _save()
         _task = asyncio.create_task(_job_main(target))
