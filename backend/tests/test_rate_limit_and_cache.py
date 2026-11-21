@@ -3,8 +3,6 @@
 import asyncio
 import time
 
-import pytest
-
 from tests.test_update import sync, OLD, NEW, BRANCH, github, upd
 
 
@@ -22,7 +20,7 @@ async def test_rate_limit_403_with_header_returns_unreachable(upd, monkeypatch):
             {"x-ratelimit-remaining": "0"},
         )
     }
-    seen = github(monkeypatch, upd, routes)
+    github(monkeypatch, upd, routes)
     r = await upd.check()
     assert r["state"] == "unreachable"
     assert r["message"] == RATE_LIMIT_MSG
@@ -144,12 +142,8 @@ async def test_start_update_does_not_use_cache(upd, monkeypatch):
     runner = Runner()
     monkeypatch.setattr(asyncio, "create_subprocess_exec", runner)
 
-    # start_update() calls check() internally but should bypass cache via _latest_version_fresh()
-    try:
-        await upd.start_update()
-    except RuntimeError as e:
-        # Expected: "up_to_date" or "not_configured" depending on state
-        pass
+    # start_update() calls check() internally but should bypass cache via check(fresh=True)
+    job = await upd.start_update()
 
     # start_update() should have made fresh GitHub requests
     # Check that /releases/latest and /commits/HEAD were requested again
@@ -158,6 +152,10 @@ async def test_start_update_does_not_use_cache(upd, monkeypatch):
         f"Expected /releases/latest in fresh requests, got {paths}"
     assert "/repos/thelorax1775/yt-dlp-ui/commits/HEAD" in paths, \
         f"Expected /commits/HEAD in fresh requests, got {paths}"
+    
+    # The job should be running with the new commit as target
+    assert job["status"] == "running"
+    assert job["target"] == NEW
 
 
 @sync
