@@ -2,9 +2,7 @@
 
 import asyncio
 import time
-from unittest.mock import patch
 
-import httpx
 import pytest
 
 from tests.test_update import sync, OLD, NEW, BRANCH, github, upd
@@ -65,8 +63,8 @@ async def test_403_without_ratelimit_header_still_says_private(upd, monkeypatch)
 
 
 @sync
-async def test_check_caches_latest_version(upd, monkeypatch):
-    """Two check() calls within cache window make 4 GitHub requests total (3 for first, 1 for second)."""
+async def test_check_caches_latest_version_and_relation(upd, monkeypatch):
+    """Two check() calls within cache window make 3 GitHub requests total (both fully cached)."""
     routes = {**BRANCH, **CMP}
     seen = github(monkeypatch, upd, routes)
 
@@ -74,12 +72,12 @@ async def test_check_caches_latest_version(upd, monkeypatch):
     r1 = await upd.check()
     assert r1["state"] == "update_available"
 
-    # Second call within cache window - 1 request: compare (latest_version cached)
+    # Second call within cache window - 0 requests (both latest_version and relation cached)
     r2 = await upd.check()
     assert r2["state"] == "update_available"
 
-    # Should have made 4 requests total (not 6 which would be 3 per call without caching)
-    assert len(seen) == 4, f"Expected 4 requests, got {len(seen)}"
+    # Should have made 3 requests total (not 6 which would be 3 per call without caching)
+    assert len(seen) == 3, f"Expected 3 requests, got {len(seen)}"
 
 
 @sync
@@ -92,26 +90,26 @@ async def test_cache_expires_after_600_seconds(upd, monkeypatch):
     r1 = await upd.check()
     assert r1["state"] == "update_available"
 
-    # Second call within cache window - 1 request (compare)
+    # Second call within cache window - 0 requests
     r2 = await upd.check()
     assert r2["state"] == "update_available"
-    assert len(seen) == 4
+    assert len(seen) == 3
 
     # Advance time by 601 seconds by patching time.monotonic in the updater module
     import services.updater as updater_module
     base_time = time.monotonic()
     monkeypatch.setattr(updater_module.time, "monotonic", lambda: base_time + 601)
-    
+
     r3 = await upd.check()
     assert r3["state"] == "update_available"
 
-    # Should have made 7 requests total (3 + 1 + 3)
-    assert len(seen) == 7, f"Expected 7 requests after cache expiry, got {len(seen)}"
+    # Should have made 6 requests total (3 + 0 + 3)
+    assert len(seen) == 6, f"Expected 6 requests after cache expiry, got {len(seen)}"
 
 
 @sync
 async def test_start_update_does_not_use_cache(upd, monkeypatch):
-    """start_update() makes GitHub requests even when cache is fresh."""
+    """start_update() makes fresh GitHub requests for /releases/latest and /commits/HEAD even when cache is fresh."""
     routes = {**BRANCH, **CMP}
     seen = github(monkeypatch, upd, routes)
 
@@ -133,18 +131,20 @@ async def test_start_update_does_not_use_cache(upd, monkeypatch):
 
             class P:
                 returncode = 0
+
                 async def communicate(_):
                     if "rev-parse HEAD" in text:
                         return OLD.encode(), b""
                     if "status --porcelain" in text:
                         return b"", b""
                     return b"", b""
+
             return P()
 
     runner = Runner()
     monkeypatch.setattr(asyncio, "create_subprocess_exec", runner)
 
-    # start_update() calls check() internally but should bypass cache
+    # start_update() calls check() internally but should bypass cache via _latest_version_fresh()
     try:
         await upd.start_update()
     except RuntimeError as e:
@@ -152,21 +152,51 @@ async def test_start_update_does_not_use_cache(upd, monkeypatch):
         pass
 
     # start_update() should have made fresh GitHub requests
-    # At minimum, it should call latest_version() again (3 requests)
-    assert len(seen) > initial_count, "start_update() should make fresh GitHub requests"
+    # Check that /releases/latest and /commits/HEAD were requested again
+    paths = [str(req.url.path) for req in seen[initial_count:]]
+    assert "/repos/thelorax1775/yt-dlp-ui/releases/latest" in paths, \
+        f"Expected /releases/latest in fresh requests, got {paths}"
+    assert "/repos/thelorax1775/yt-dlp-ui/commits/HEAD" in paths, \
+        f"Expected /commits/HEAD in fresh requests, got {paths}"
 
 
 @sync
-async def test_cache_clear_function_exists(upd):
-    """_cache_clear() function exists and clears the cache."""
-    # This test will fail initially until we add the function
-    assert hasattr(upd, "_cache_clear"), "_cache_clear function should exist"
-    # Should not raise
+async def test_cache_clear_function_clears_both_caches(upd, monkeypatch):
+    """_cache_clear() function clears both latest_version and relation caches."""
+    routes = {**BRANCH, **CMP}
+    seen = github(monkeypatch, upd, routes)
+
+    # First call - 3 requests
+    await upd.check()
+    assert len(seen) == 3
+
+    # Second call - 0 requests (cached)
+    await upd.check()
+    assert len(seen) == 3
+
+    # Clear cache
     upd._cache_clear()
 
+    # Third call - should make 3 requests again
+    await upd.check()
+    assert len(seen) == 6, f"Expected 6 requests after cache clear, got {len(seen)}"
 
-def test_upd_fixture_clears_cache(upd):
-    """The upd fixture clears the cache so existing tests are unaffected."""
-    # The fixture should call _cache_clear() automatically
-    # This test just verifies the fixture works
-    pass
+
+@sync
+async def test_rate_limit_on_compare_returns_rate_limit_message(upd, monkeypatch):
+    """A rate-limited compare request returns the rate-limit message, not 'unknown'."""
+    routes = {
+        "/repos/thelorax1775/yt-dlp-ui/releases/latest": (200, {"tag_name": "v2.0.0"}),
+        "/repos/thelorax1775/yt-dlp-ui/commits/v2.0.0": (200, {"sha": NEW}),
+        f"/repos/thelorax1775/yt-dlp-ui/compare/{OLD}...{NEW}": (
+            403,
+            {"message": "API rate limit exceeded"},
+            {"x-ratelimit-remaining": "0"},
+        ),
+    }
+    seen = github(monkeypatch, upd, routes)
+    r = await upd.check()
+    assert r["state"] == "unreachable"
+    assert r["message"] == RATE_LIMIT_MSG
+    assert "private" not in r["message"].lower()
+    assert "unknown" not in r["message"].lower()

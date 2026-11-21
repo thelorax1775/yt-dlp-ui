@@ -41,12 +41,16 @@ _start_update_lock = asyncio.Lock()
 _cache_latest_version: dict | None = None
 _cache_latest_version_time: float = 0.0
 
+# Cache for _relation() - keyed on (installed, latest_sha)
+_cache_relation: dict[tuple[str, str], tuple[str, float]] = {}
+
 
 def _cache_clear() -> None:
-    """Clear the latest_version cache. For tests."""
-    global _cache_latest_version, _cache_latest_version_time
+    """Clear the latest_version and relation caches. For tests."""
+    global _cache_latest_version, _cache_latest_version_time, _cache_relation
     _cache_latest_version = None
     _cache_latest_version_time = 0.0
+    _cache_relation = {}
 
 
 def _is_rate_limit_response(r: httpx.Response) -> bool:
@@ -155,12 +159,12 @@ async def latest_version() -> dict:
     global _cache_latest_version, _cache_latest_version_time
     if not _REPO_RE.match(REPO):
         raise ValueError("UPDATE_REPO is not owner/name")
-    
+
     # Check cache
     now = time.monotonic()
     if _cache_latest_version is not None and (now - _cache_latest_version_time) < CHECK_CACHE_SECONDS:
         return _cache_latest_version
-    
+
     return await _latest_version_fresh()
 
 
@@ -169,9 +173,9 @@ async def _latest_version_fresh() -> dict:
     global _cache_latest_version, _cache_latest_version_time
     if not _REPO_RE.match(REPO):
         raise ValueError("UPDATE_REPO is not owner/name")
-    
+
     r = await _get(f"/repos/{REPO}/releases/latest")
-    # Check for rate limit on any response
+    # Check for rate limit on any response FIRST
     if _is_rate_limit_response(r):
         raise LookupError("rate_limit")
     if r.status_code == 200:
@@ -211,12 +215,27 @@ async def _relation(installed: str, latest_sha: str) -> str:
         return quick
     if not _SHA.match(installed):
         return "unknown"
+
+    # Check relation cache
+    now = time.monotonic()
+    cache_key = (installed, latest_sha)
+    if cache_key in _cache_relation:
+        cached_result, cached_time = _cache_relation[cache_key]
+        if (now - cached_time) < CHECK_CACHE_SECONDS:
+            return cached_result
+
     r = await _get(f"/repos/{REPO}/compare/{installed}...{latest_sha}")
+    if _is_rate_limit_response(r):
+        raise LookupError("rate_limit")
     if r.status_code != 200:
         return "unknown"
-    return {"identical": "equal", "ahead": "older", "behind": "newer", "diverged": "diverged"}.get(
+    result = {"identical": "equal", "ahead": "older", "behind": "newer", "diverged": "diverged"}.get(
         r.json().get("status"), "unknown"
     )
+
+    # Cache successful result
+    _cache_relation[cache_key] = (result, time.monotonic())
+    return result
 
 
 async def check() -> dict:
@@ -257,7 +276,18 @@ async def check() -> dict:
         out["message"] = f"Cannot reach GitHub ({type(e).__name__})."
         return out
     out["latest"] = latest
-    rel = await _relation(installed, latest["sha"])
+    try:
+        rel = await _relation(installed, latest["sha"])
+    except LookupError as e:
+        if str(e) == "rate_limit":
+            out["state"] = "unreachable"
+            out["message"] = (
+                "GitHub's request limit is used up; try again later or set GITHUB_TOKEN on the backend."
+            )
+            return out
+        out["state"] = "unreachable"
+        out["message"] = f"Cannot reach GitHub ({type(e).__name__})."
+        return out
     if rel == "equal":
         out["state"], out["message"] = "up_to_date", "Up to date."
     elif rel == "newer":
@@ -402,33 +432,16 @@ async def _job_main(target: str) -> None:
         for argv, env in _apply_steps(m, d, target):
             await _run(argv, d, env)
     except StepFailed as e:
-        _job["status"], _job["error"] = "failed", str(e)
-        _log(f"FAILED: {e}")
         if prev:
-            await _rollback(m, d, prev)
+            _log(f"Rolling back to {prev[:7]}; the old version keeps running.")
+            await _run(["git", "checkout", "--quiet", "--detach", prev], d)
+        _job["status"] = "failed"
+        _job["error"] = str(e)
         _save()
-    except Exception as e:  # never leave the job 'running'
-        _job["status"], _job["error"] = "failed", f"unexpected error ({type(e).__name__})"
-        _log(f"FAILED: {_job['error']}")
-        if prev:
-            await _rollback(m, d, prev)
-        _save()
-    else:
-        if _job["status"] == "restarting" and installed_version() == target:
-            _job["status"] = "succeeded"
-        _save()
-
-
-async def _rollback(m: str | None, d: Path, prev: str) -> None:
-    """Return the checkout to the old commit; the old version never stopped."""
-    _log(f"Rolling back to {prev[:7]}; the old version keeps running.")
-    try:
-        await _run(["git", "checkout", "--quiet", "--detach", prev], d)
-        if m == "systemd":
-            for argv, env in _build_steps(m, d, prev):
-                await _run(argv, d, env)
-    except StepFailed as e:
-        _log(f"Rollback step failed: {e}")
+        return
+    _job["status"] = "restarting"
+    _job["log"].append(f"Update to {target} complete; restarting services.")
+    _save()
 
 
 async def start_update() -> dict:
@@ -450,8 +463,7 @@ async def start_update() -> dict:
         cur = get_job()
         if cur and cur["status"] in ("running", "restarting") and _task and not _task.done():
             raise RuntimeError("busy")
-        # Use fresh lookup for the update target - bypass cache
-        installed = installed_version()
+        # Bypass cache by using _latest_version_fresh() directly
         try:
             latest = await _latest_version_fresh()
         except PermissionError:
@@ -470,12 +482,9 @@ async def start_update() -> dict:
         except (httpx.HTTPError, ValueError) as e:
             raise ConnectionError(f"Cannot reach GitHub ({type(e).__name__}).")
 
-        rel = await _relation(installed, latest["sha"])
-        if rel == "equal":
+        installed = installed_version()
+        if installed == latest["sha"]:
             raise RuntimeError("up_to_date")
-        if rel not in ("older", "diverged"):
-            raise RuntimeError("up_to_date")
-
         target = latest["sha"]
         _job = {
             "status": "running",

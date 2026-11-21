@@ -31,11 +31,12 @@ def upd(backend, monkeypatch):
     monkeypatch.setenv("UPDATE_APP_DIR", str(backend.tmp_path / "app"))
     monkeypatch.delenv("GITHUB_TOKEN", raising=False)
     (backend.tmp_path / "app").mkdir()
+    updater._cache_clear()
     return updater
 
 
 def github(monkeypatch, upd, routes):
-    """routes: path -> (status, json) or (status, json, headers) or an exception instance."""
+    """routes: path -> (status, json, headers?) or an exception instance."""
     seen = []
 
     def handler(request: httpx.Request):
@@ -93,6 +94,8 @@ async def test_check_older_equal_newer_by_sha(upd, monkeypatch):
 
     routes[f"/repos/thelorax1775/yt-dlp-ui/compare/{OLD}...{NEW}"] = (200, {"status": "behind"})
     monkeypatch.setenv("APP_VERSION", OLD)
+    # Clear relation cache since we changed the mock response
+    upd._cache_clear()
     r = await upd.check()
     assert (r["state"], r["update_available"]) == ("ahead", False)
 
