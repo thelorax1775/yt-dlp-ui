@@ -8,6 +8,7 @@
     "start": "next start",
     "lint": "eslint . --max-warnings 0",
     "typecheck": "tsc --noEmit",
+    "test:unit": "node --experimental-strip-types --test tests/*.test.mjs",
     "test:smoke": "node scripts/smoke.mjs"
   },
   "dependencies": {

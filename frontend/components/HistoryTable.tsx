@@ -1,6 +1,6 @@
 "use client";
 
-import { ExternalLink } from "lucide-react";
+import { ExternalLink, Trash2 } from "lucide-react";
 import {
   Table,
   TableBody,
@@ -10,6 +10,7 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Card } from "@/components/ui/card";
+import { Button } from "@/components/ui/button";
 import { formatDate } from "@/lib/utils";
 import type { HistoryEntry } from "@/lib/types";
 
@@ -22,7 +23,13 @@ function Thumb({ src }: { src?: string | null }) {
   );
 }
 
-export function HistoryTable({ entries }: { entries: HistoryEntry[] }) {
+export function HistoryTable({
+  entries,
+  onDelete,
+}: {
+  entries: HistoryEntry[];
+  onDelete?: (id: string) => void;
+}) {
   return (
     <>
       {/* Mobile: stacked cards */}
@@ -56,6 +63,16 @@ export function HistoryTable({ entries }: { entries: HistoryEntry[] }) {
                 </a>
               )}
             </div>
+            {onDelete && (
+              <Button
+                variant="ghost"
+                size="icon"
+                aria-label="Delete history entry"
+                onClick={() => onDelete(e.id)}
+              >
+                <Trash2 />
+              </Button>
+            )}
           </Card>
         ))}
       </div>
@@ -69,6 +86,7 @@ export function HistoryTable({ entries }: { entries: HistoryEntry[] }) {
               <TableHead className="w-[40%]">Title</TableHead>
               <TableHead className="w-44">Date</TableHead>
               <TableHead>File</TableHead>
+              {onDelete && <TableHead className="w-12" />}
             </TableRow>
           </TableHeader>
           <TableBody>
@@ -105,6 +123,18 @@ export function HistoryTable({ entries }: { entries: HistoryEntry[] }) {
                     {e.file_path || "—"}
                   </span>
                 </TableCell>
+                {onDelete && (
+                  <TableCell>
+                    <Button
+                      variant="ghost"
+                      size="icon"
+                      aria-label="Delete history entry"
+                      onClick={() => onDelete(e.id)}
+                    >
+                      <Trash2 />
+                    </Button>
+                  </TableCell>
+                )}
               </TableRow>
             ))}
           </TableBody>

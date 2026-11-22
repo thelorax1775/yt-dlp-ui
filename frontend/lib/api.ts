@@ -65,6 +65,16 @@ export const api = {
 
   getHistory: () => handle<HistoryEntry[]>(fetch("/api/history")),
 
+  deleteHistoryEntry: (id: string) =>
+    handle<{ status: string; id: string }>(
+      fetch(`/api/history/${id}`, { method: "DELETE" })
+    ),
+
+  clearHistory: () =>
+    handle<{ status: string; count: number }>(
+      fetch("/api/history", { method: "DELETE" })
+    ),
+
   getSettings: () => handle<Settings>(fetch("/api/settings")),
 
   updateSettings: (data: SettingsUpdate) =>
