@@ -147,6 +147,8 @@ nginx.conf         # example reverse proxy
 | DELETE | `/api/jobs/{id}`         | Cancel a job                      |
 | POST   | `/api/jobs/{id}/retry`   | Retry a failed/cancelled job      |
 | GET    | `/api/history`           | List completed downloads          |
+| DELETE | `/api/history/{id}`      | Delete one history entry (the file stays) |
+| DELETE | `/api/history`           | Clear the history (files stay)    |
 | GET    | `/api/settings`          | Get settings (includes `audio_download_folder`) |
 | POST   | `/api/settings`          | Update settings (any subset of fields) |
 | GET    | `/api/shares`            | List network shares (+ mount state) |
