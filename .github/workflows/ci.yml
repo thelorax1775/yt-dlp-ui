@@ -52,6 +52,8 @@ jobs:
         run: npm run lint
       - name: Typecheck
         run: npm run typecheck
+      - name: Unit tests
+        run: npm run test:unit
       - name: Build
         run: npm run build
       - name: Smoke test (next start, /api rewrite, image endpoint off)

@@ -381,6 +381,7 @@ cd frontend
 npm ci
 npm run lint
 npm run typecheck
+npm run test:unit
 npm run build
 npm run test:smoke
 ```
@@ -605,7 +606,7 @@ streams through immediately.
 Working MVP, in personal use and maintained as YouTube changes (latest fixes
 cover 403s and cookie-auth client selection). A first set of backend tests and
 a CI workflow exist (see [Running the checks](#running-the-checks)); the
-frontend has lint, typecheck and build checks but no unit tests yet. There is
+frontend has lint, typecheck, API unit test and build checks. There is
 no license file. Windows/macOS native runs are documented but less exercised
 than Docker on Linux.
 
